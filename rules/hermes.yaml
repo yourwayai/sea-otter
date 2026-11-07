@@ -1,0 +1,58 @@
+id: hermes
+name: Hermes Agent
+category: desktop-agent
+vendor: Hermes
+homepage: https://github.com/hermes-agent
+
+# 活跃保护机制 (Hermes 后台驻留 Python 网关、Supervisor 与 Daemon 进程)
+protection:
+  process_names:
+    - hermes_cli
+    - browser_harness.daemon
+    - process_supervisor.sh
+    - Hermes
+
+detection:
+  app_bundle_id:
+    - com.hermes.agent
+  app_paths:
+    - /Applications/Hermes.app
+  cli_binaries:
+    - ~/.hermes/tools/python-*/bin/python3
+    - ~/.local/bin/hermes
+
+targets:
+  binaries_and_scripts:
+    - path: ~/.hermes/tools
+      description: "独立内嵌的 Python & Node.js 运行时环境"
+      default_selected: true
+  credentials:
+    - path: ~/.hermes/config.json
+      description: "API Key 凭证与远程网关连接鉴权"
+      default_selected: true
+      contains_secrets: true
+  configs:
+    - path: ~/.hermes/profiles
+      description: "用户 Profile 与 Agent 提示词配置"
+      default_selected: false
+  data_and_history:
+    - path: ~/.hermes
+      description: "核心运行时、网关状态与任务历史"
+      default_selected: true
+    - path: ~/Hermes Agent
+      description: "Agent 生产的工作区资产与执行历史"
+      default_selected: false
+    - path: ~/Library/Application Support/Hermes
+      description: "桌面客户端数据与日志"
+      default_selected: true
+  caches:
+    - path: ~/.hermes/logs
+      description: "网关运行日志"
+      default_selected: true
+
+safety:
+  protect_git_repos: true
+  protect_workspaces: true
+  exclude_paths:
+    - ~/Documents
+    - ~/Projects

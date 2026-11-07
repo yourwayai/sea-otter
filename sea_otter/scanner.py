@@ -21,6 +21,7 @@ class TargetMatch:
     size_bytes: int
     file_count: int
     contains_secrets: bool
+    is_model_weight: bool
     default_selected: bool
     is_safe: bool
     safety_reason: str
@@ -32,11 +33,14 @@ class ToolScanReport:
     category: str
     vendor: str
     homepage: str
-    status: str  # "installed" | "orphaned" | "clean"
+    status: str  # "running" | "installed" | "orphaned" | "clean"
     detection_matches: List[str] = field(default_factory=list)
+    running_processes: List[str] = field(default_factory=list)
+    active_locks: List[str] = field(default_factory=list)
     targets: List[TargetMatch] = field(default_factory=list)
     total_size_bytes: int = 0
     safe_size_bytes: int = 0
+    model_weight_size_bytes: int = 0
 
     @property
     def has_residuals(self) -> bool:
@@ -45,6 +49,10 @@ class ToolScanReport:
     @property
     def secret_count(self) -> int:
         return sum(1 for t in self.targets if t.contains_secrets)
+
+    @property
+    def is_running(self) -> bool:
+        return self.status == "running"
 
 class RuleScanner:
     def __init__(self, rules_dir: Optional[str] = None):
@@ -163,20 +171,58 @@ class RuleScanner:
 
         return False, []
 
+    def _check_running_processes(self, process_names: List[str]) -> List[str]:
+        """检查系统进程表中是否存在指定的活跃进程 (pgrep 快速核对)"""
+        matched = []
+        for pname in process_names:
+            if not pname:
+                continue
+            try:
+                # 使用 pgrep 匹配进程命令行
+                res = subprocess.run(["pgrep", "-fl", pname], capture_output=True, text=True, timeout=2)
+                if res.returncode == 0 and res.stdout.strip():
+                    lines = [line.strip() for line in res.stdout.strip().splitlines()]
+                    for l in lines[:2]:
+                        matched.append(l)
+            except Exception:
+                pass
+        return matched
+
+    def _check_active_locks(self, lock_files: List[str]) -> List[str]:
+        """检查是否存在活跃的单例运行锁文件或套接字"""
+        matched = []
+        for lf in lock_files:
+            exp = normalize_path(lf)
+            if os.path.exists(exp):
+                matched.append(lf)
+        return matched
+
     def scan_tool(self, rule: Dict[str, Any]) -> ToolScanReport:
-        """针对单个工具规则执行完整扫描"""
+        """针对单个工具规则执行完整扫描 (融入 v1.1 存活交叉验证与安全防线)"""
         tool_id = rule.get("id", "unknown")
         name = rule.get("name", tool_id)
         category = rule.get("category", "other")
         vendor = rule.get("vendor", "")
         homepage = rule.get("homepage", "")
         safety_config = rule.get("safety", {})
+        protection_config = rule.get("protection", {})
 
+        # 1. 活跃保护存活检测 (铁律一：多维存活状态交叉验证)
+        proc_names = protection_config.get("process_names", [])
+        active_processes = self._check_running_processes(proc_names)
+
+        lock_files = protection_config.get("lock_files", [])
+        active_locks = self._check_active_locks(lock_files)
+
+        is_running = bool(active_processes or active_locks)
+
+        # 2. 安装状态检测
         is_installed, det_matches = self.detect_software_installed(rule)
         
         targets: List[TargetMatch] = []
         total_size = 0
         safe_size = 0
+        model_weight_size = 0
 
         target_categories = rule.get("targets", {})
         for cat_name, items in target_categories.items():
@@ -199,6 +245,13 @@ class RuleScanner:
                     
                     size, count = self._get_path_size_and_count(p)
                     is_safe, reason = validate_target_safety(p, safety_config)
+                    is_model = item.get("is_model_weight", False) or cat_name == "ai_models"
+
+                    # 如果正在运行中，强制阻断清理建议
+                    if is_running:
+                        is_safe = False
+                        proc_hint = active_processes[0] if active_processes else (active_locks[0] if active_locks else "活跃中")
+                        reason = f"软件正在运行中 ({proc_hint})，安全防线强制锁定保护"
 
                     t_match = TargetMatch(
                         category=cat_name,
@@ -208,34 +261,37 @@ class RuleScanner:
                         size_bytes=size,
                         file_count=count,
                         contains_secrets=item.get("contains_secrets", False),
-                        default_selected=item.get("default_selected", True),
+                        is_model_weight=is_model,
+                        default_selected=False if is_running else item.get("default_selected", True),
                         is_safe=is_safe,
                         safety_reason=reason
                     )
                     targets.append(t_match)
 
         # 对命中的路径进行容量去重计算（如果父目录已被包含，不重复累加总大小）
-        # 首先按路径长度正序排序，先处理父目录
         resolved_dirs = set()
         for t in targets:
             if os.path.isdir(t.resolved_path):
                 resolved_dirs.add(t.resolved_path)
 
         for t in targets:
-            # 判断当前路径是否被已经在 targets 中的某个父目录包含
             is_nested = False
             for d in resolved_dirs:
                 if d != t.resolved_path and t.resolved_path.startswith(d + os.sep):
                     is_nested = True
                     break
             
-            # 如果不是被更大父目录包含的子项，则计入总容量
             if not is_nested:
                 total_size += t.size_bytes
                 if t.is_safe:
                     safe_size += t.size_bytes
+                if t.is_model_weight:
+                    model_weight_size += t.size_bytes
 
-        if is_installed:
+        # 状态判定状态机
+        if is_running:
+            status = "running"
+        elif is_installed:
             status = "installed"
         elif len(targets) > 0:
             status = "orphaned"
@@ -250,9 +306,12 @@ class RuleScanner:
             homepage=homepage,
             status=status,
             detection_matches=det_matches,
+            running_processes=active_processes,
+            active_locks=active_locks,
             targets=targets,
             total_size_bytes=total_size,
-            safe_size_bytes=safe_size
+            safe_size_bytes=safe_size,
+            model_weight_size_bytes=model_weight_size
         )
 
     def scan_all(self, filter_ids: Optional[List[str]] = None) -> List[ToolScanReport]:

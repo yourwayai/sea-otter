@@ -35,7 +35,10 @@ def cmd_scan(args, scanner: RuleScanner):
                 "status": r.status,
                 "total_size_bytes": r.total_size_bytes,
                 "safe_size_bytes": r.safe_size_bytes,
+                "model_weight_size_bytes": r.model_weight_size_bytes,
                 "secret_count": r.secret_count,
+                "running_processes": r.running_processes,
+                "active_locks": r.active_locks,
                 "targets": [
                     {
                         "category": t.category,
@@ -43,6 +46,7 @@ def cmd_scan(args, scanner: RuleScanner):
                         "description": t.description,
                         "size_bytes": t.size_bytes,
                         "contains_secrets": t.contains_secrets,
+                        "is_model_weight": t.is_model_weight,
                         "is_safe": t.is_safe,
                         "safety_reason": t.safety_reason
                     }
@@ -54,11 +58,13 @@ def cmd_scan(args, scanner: RuleScanner):
 
     # 人类可读格式渲染
     total_tools = len(reports)
+    running_count = sum(1 for r in reports if r.status == "running")
     installed_count = sum(1 for r in reports if r.status == "installed")
     orphaned_count = sum(1 for r in reports if r.status == "orphaned")
     clean_count = sum(1 for r in reports if r.status == "clean")
     total_bytes = sum(r.total_size_bytes for r in reports)
     total_secrets = sum(r.secret_count for r in reports)
+    total_model_bytes = sum(r.model_weight_size_bytes for r in reports)
 
     visible_reports = [r for r in reports if r.has_residuals or args.show_all]
 
@@ -75,7 +81,10 @@ def cmd_scan(args, scanner: RuleScanner):
         
         # 头部标题
         print(f"📦 {c(r.name, Color.BOLD, Color.BRIGHT_WHITE)} {c(f'({r.tool_id})', Color.DIM)} -> {status_badge}")
-        if r.detection_matches:
+        if r.running_processes:
+            p_desc = ", ".join(r.running_processes[:2])
+            print(f"   {c('活跃进程:', Color.DIM)} {c(p_desc, Color.BRIGHT_BLUE)} {c('(🛡️ 安全防线已锁定保护，避免误伤)', Color.YELLOW)}")
+        elif r.detection_matches:
             det_info = ", ".join(r.detection_matches)
             print(f"   {c('检测凭证:', Color.DIM)} {c(det_info, Color.CYAN)}")
         
@@ -84,9 +93,10 @@ def cmd_scan(args, scanner: RuleScanner):
             for t in r.targets:
                 cat_desc = CATEGORY_NAMES.get(t.category, t.category)
                 secret_badge = c(" 🔑[敏感凭证]", Color.BOLD, Color.RED) if t.contains_secrets else ""
+                model_badge = c(" 🧠[本地模型权重]", Color.BOLD, Color.BRIGHT_CYAN) if t.is_model_weight else ""
                 safety_badge = "" if t.is_safe else c(f" ⚠️[{t.safety_reason}]", Color.BOLD, Color.BRIGHT_RED)
                 
-                print(f"     • [{c(cat_desc, Color.MAGENTA)}] {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_badge}{safety_badge}")
+                print(f"     • [{c(cat_desc, Color.MAGENTA)}] {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_badge}{model_badge}{safety_badge}")
                 if t.description:
                     print(f"       {c('↳ ' + t.description, Color.DIM)}")
         else:
@@ -94,11 +104,20 @@ def cmd_scan(args, scanner: RuleScanner):
         print()
 
     # 底部统计卡片
+    status_summary_parts = []
+    if running_count > 0:
+        status_summary_parts.append(c(f"{running_count} 运行保护", Color.BRIGHT_BLUE))
+    status_summary_parts.append(c(f"{installed_count} 已安装", Color.GREEN))
+    status_summary_parts.append(c(f"{orphaned_count} 孤儿残留", Color.YELLOW))
+    status_summary_parts.append(c(f"{clean_count} 整洁无残留", Color.DIM))
+
     print(c("═" * 68, Color.DIM))
     print(c("📊 扫描体检汇总报告", Color.BOLD, Color.BRIGHT_CYAN))
     print(f" • 覆盖规则: {c(str(total_tools), Color.BOLD)} 个工具")
-    print(f" • 软件状态: {c(str(installed_count) + ' 已安装', Color.GREEN)} | {c(str(orphaned_count) + ' 孤儿残留', Color.YELLOW)} | {c(str(clean_count) + ' 整洁无残留', Color.DIM)}")
+    print(f" • 软件状态: {' | '.join(status_summary_parts)}")
     print(f" • 发现占用: {c(format_size(total_bytes), Color.BOLD, Color.BRIGHT_YELLOW)}")
+    if total_model_bytes > 0:
+        print(f" • 本地模型: {c(format_size(total_model_bytes), Color.BOLD, Color.BRIGHT_CYAN)} (包含 LLM / 向量嵌入模型)")
     if total_secrets > 0:
         print(f" • 敏感凭证: {c(str(total_secrets) + ' 处包含私钥/OAuth Token', Color.BOLD, Color.RED)}")
     print(c("═" * 68, Color.DIM))

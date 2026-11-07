@@ -43,25 +43,29 @@ def normalize_path(path: str) -> str:
     """展开并标准化路径"""
     return os.path.abspath(os.path.expanduser(path))
 
-def contains_git_repo(path: str) -> bool:
-    """检查指定路径自身或其直接内部是否是 Git 仓库"""
+WORKSPACE_INDICATORS = {".git", ".svn", ".hg", ".obsidian"}
+
+def contains_workspace_or_repo(path: str) -> Tuple[bool, str]:
+    """检查指定路径自身或其内部是否是 Git/SVN/Obsidian 等工作区资产"""
     normalized = normalize_path(path)
     if not os.path.exists(normalized):
-        return False
+        return False, ""
     
-    # 路径本身包含 .git (比如 /foo/bar/.git)
-    if normalized.endswith("/.git") or os.path.basename(normalized) == ".git":
-        return True
+    # 路径本身就是版本控制或笔记库标识
+    base = os.path.basename(normalized)
+    if base in WORKSPACE_INDICATORS:
+        return True, base
         
-    # 目标目录内是否含有 .git
+    # 目标目录内是否直接含有工作区标识
     if os.path.isdir(normalized):
-        if os.path.exists(os.path.join(normalized, ".git")):
-            return True
-    return False
+        for ind in WORKSPACE_INDICATORS:
+            if os.path.exists(os.path.join(normalized, ind)):
+                return True, ind
+    return False, ""
 
 def validate_target_safety(target_path: str, rule_safety: Optional[dict] = None) -> Tuple[bool, str]:
     """
-    全面校验目标路径清理的安全性
+    全面校验目标路径清理的安全性 (严格实施零误伤防线)
     返回: (is_safe: bool, reason: str)
     """
     normalized = normalize_path(target_path)
@@ -89,12 +93,16 @@ def validate_target_safety(target_path: str, rule_safety: Optional[dict] = None)
             if normalized == ex_norm or ex_norm.startswith(normalized + os.sep):
                 return False, f"命中了规则中配置的严格排除路径: {ex}"
 
-    # 5. Git 仓库强保护检测
+    # 5. 代码工程与工作区“强制免疫”（.git / .svn / .obsidian）
     protect_git = True
-    if rule_safety is not None and "protect_git_repos" in rule_safety:
-        protect_git = rule_safety["protect_git_repos"]
+    protect_workspaces = True
+    if rule_safety is not None:
+        protect_git = rule_safety.get("protect_git_repos", True)
+        protect_workspaces = rule_safety.get("protect_workspaces", True)
 
-    if protect_git and contains_git_repo(normalized):
-        return False, f"检测到 Git 代码仓库 (.git)，安全策略已阻断清理: {normalized}"
+    if protect_git or protect_workspaces:
+        has_ws, ind_name = contains_workspace_or_repo(normalized)
+        if has_ws:
+            return False, f"检测到工作区/工程资产 ({ind_name})，强制免疫阻断清理: {normalized}"
 
     return True, "安全校验通过"

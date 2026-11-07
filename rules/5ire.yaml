@@ -1,0 +1,54 @@
+id: 5ire
+name: 5ire AI Desktop
+category: desktop-agent
+vendor: 5ire
+homepage: https://5ire.app
+
+# 活跃保护机制 (只要进程存在或持有锁，强制锁定保护，严禁列入默认清理建议)
+protection:
+  process_names:
+    - 5ire
+    - 5ire Helper
+  lock_files:
+    - ~/Library/Application Support/5ire/SingletonLock
+    - ~/Library/Application Support/5ire/SingletonSocket
+
+detection:
+  app_bundle_id:
+    - com.5ire.app
+  app_paths:
+    - /Applications/5ire.app
+
+targets:
+  credentials:
+    - path: ~/Library/Application Support/5ire/config.json
+      description: "包含配置的 Gemini/OpenAI API Key"
+      default_selected: true
+      contains_secrets: true
+  ai_models:
+    - path: ~/Library/Application Support/5ire/transformers-models
+      description: "Xenova BGE-M3 本地向量嵌入模型"
+      default_selected: true
+      is_model_weight: true
+  caches:
+    - path: ~/Library/Application Support/Caches/5ire-updater
+      description: "静默下载的离线安装包"
+      default_selected: true
+    - path: ~/Library/Caches/com.5ire.app
+      description: "系统级缓存"
+      default_selected: true
+  data_and_history:
+    - path: ~/Library/Application Support/5ire
+      description: "历史对话数据库 (5ire.db) 与工作区"
+      default_selected: true
+  preferences:
+    - path: ~/Library/Preferences/com.5ire.app.plist
+      description: "偏好设置"
+      default_selected: true
+
+safety:
+  protect_git_repos: true
+  protect_workspaces: true
+  exclude_paths:
+    - ~/Documents
+    - ~/Projects

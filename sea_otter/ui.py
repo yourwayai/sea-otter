@@ -71,6 +71,7 @@ CATEGORY_NAMES = {
     "caches": "纯缓存 (Cache)",
     "preferences": "偏好设置 (Preferences)",
     "credentials": "认证凭据 (Credentials)",
+    "ai_models": "本地 AI 模型 (Models)",
     "data_and_history": "数据与会话 (Data/History)",
     "configs": "配置文件 (Configs)",
     "binaries_and_scripts": "CLI 二进制 (Binaries)",
@@ -78,7 +79,9 @@ CATEGORY_NAMES = {
 
 def get_status_badge(status: str) -> str:
     """获取状态标签"""
-    if status == "installed":
+    if status == "running":
+        return c("🔵 正在运行 (Running - 保护锁定)", Color.BOLD, Color.BRIGHT_BLUE)
+    elif status == "installed":
         return c("🟢 已安装 (Installed)", Color.BOLD, Color.BRIGHT_GREEN)
     elif status == "orphaned":
         return c("🟠 孤儿残留 (Orphaned)", Color.BOLD, Color.BRIGHT_YELLOW)

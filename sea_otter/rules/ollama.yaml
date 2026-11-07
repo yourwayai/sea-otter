@@ -3,6 +3,11 @@ name: Ollama
 category: runtime
 vendor: Ollama
 homepage: https://ollama.com
+protection:
+  process_names:
+    - ollama
+    - Ollama
+
 detection:
   app_bundle_id:
     - com.electron.ollama
@@ -32,14 +37,16 @@ targets:
     - path: ~/.ollama/id_ed25519.pub
       description: "Ollama 身份公钥"
       default_selected: true
+  ai_models:
+    - path: ~/.ollama/models
+      description: "本地大语言模型权重与清单 (Blobs & Manifests，通常数 GB 至数十 GB)"
+      default_selected: true
+      is_model_weight: true
   configs:
     - path: ~/.ollama/config.json
       description: "Ollama 全局参数配置"
       default_selected: false
   data_and_history:
-    - path: ~/.ollama/models
-      description: "本地大语言模型权重与清单 (Blobs & Manifests，通常数 GB 至数十 GB)"
-      default_selected: true
     - path: ~/.ollama/history
       description: "命令行交互式对话历史"
       default_selected: true
