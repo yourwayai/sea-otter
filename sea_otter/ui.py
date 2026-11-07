@@ -60,33 +60,29 @@ def format_size(size_bytes: int) -> str:
     return f"{val:.1f} PB"
 
 def print_banner(full: bool = False):
-    """打印 Sea-Otter 终端吉祥物与标题横幅"""
-    if full:
-        W = Color.BRIGHT_WHITE
-        Y = Color.BRIGHT_YELLOW
-        C = Color.BRIGHT_CYAN
-        G = Color.BRIGHT_GREEN
-        D = Color.DIM
+    """打印 Sea-Otter 极简科技感文本大字横幅 (Gemini CLI / Developer CLI 风格)"""
+    C1 = Color.BRIGHT_CYAN
+    C2 = Color.CYAN
+    C3 = Color.BLUE
+    DIM = Color.DIM
+    BOLD = Color.BOLD
+    W = Color.BRIGHT_WHITE
+    Y = Color.YELLOW
 
-        art = [
-            "               " + c(".---.", Y) + "          " + c(".---.", Y),
-            "              " + c("/     \\________/     \\", Y) + "        " + c("🦦 Sea-Otter DevSweep Engine", Color.BOLD, C) + " " + c("v1.0.0", D),
-            "             " + c("|   .-.          .-.   |", Y) + "       " + c("面向新一代 AI 编程工具与 Agent CLI 的精细化体检清理", Color.YELLOW),
-            "            " + c("/   (   )        (   )   \\", Y) + "      " + c("Clean AI tools like an otter grooms its fur!", D),
-            "           " + c("/     '-'          '-'     \\", Y),
-            "          " + c("|      ", Y) + c("[■]", W) + c("            ", Y) + c("[■]", W) + c("      |", Y) + "      " + c("GitHub: ", D) + c("https://github.com/yourwayai/sea-otter", C),
-            "        " + c("==|              ▲             |==", Y) + "     " + c("Core:   ", D) + c("Process Guards · Git Immunity · Trash Safe", Color.GREEN),
-            "       " + c("=== \\           ( ω )          / ===", Y),
-            "            " + c("\\          \\___/          /", Y),
-            "            " + c("/    ", Y) + c(".--------------.", C) + c("    \\", Y) + "   " + c("//", C),
-            "           " + c("/    ", Y) + c("/  ", C) + c(">_", Color.BOLD, G) + c("          \\", C) + c("    \\", Y) + " " + c("//", C),
-            "         " + c("((", W) + c("    ", Y) + c("|  ", C) + c("DevSweep Clean", D) + c("  |", C) + c("    ", Y) + c("))", W),
-            "          " + c("))", W) + c("   ", Y) + c("\\              /", C) + c("   ", Y) + c("((", W),
-            "         " + c("''", W) + c("     ", Y) + c("'--------------'", C) + c("     ", Y) + c("''", W),
-            "       " + c("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~", C),
-            "         " + c("~~~~~~\"\"\"\"~~~~~~\"\"\"\"~~~~~~\"\"\"\"~~~~", Color.CYAN)
+    if full:
+        lines = [
+            c("   _____                  ____  __  __           ", C1, BOLD),
+            c("  / ___/___  ____ _      / __ \\/ /_/ /____  _____", C1, BOLD),
+            c("  \\__ \\/ _ \\/ __ `/_____/ / / / __/ __/ _ \\/ ___/", C2, BOLD),
+            c(" ___/ /  __/ /_/ /_____/ /_/ / /_/ /_/  __/ /    ", C2),
+            c("/____/\\___/\\__,_/      \\____/\\__/\\__/\\___/_/     ", C3),
         ]
-        print("\n" + "\n".join("  " + l for l in art) + "\n")
+        divider = c("  " + "─" * 50, DIM)
+        print("\n" + "\n".join(lines))
+        print(divider)
+        print(f"  {c('🦦 DevSweep Engine', BOLD, W)} {c('· AI & Developer Tools Cleanup', Y)} {c('v1.0.0', DIM)}")
+        print(f"  {c('Safe Recycle · Process Guard · Workspace Immunity · Secrets Audit', DIM)}")
+        print(divider + "\n")
     else:
         banner = f"""
 {c("  🦦 Sea-Otter DevSweep Engine", Color.BOLD, Color.BRIGHT_CYAN)} {c("v1.0.0", Color.DIM)}
