@@ -62,17 +62,31 @@ def format_size(size_bytes: int) -> str:
 def print_banner(full: bool = False):
     """打印 Sea-Otter 终端吉祥物与标题横幅"""
     if full:
-        line1 = c("      .-'\"\"'-.", Color.BRIGHT_YELLOW)
-        line2 = c("     / #     # \\", Color.BRIGHT_YELLOW)
-        line3 = c("    : #       # :", Color.BRIGHT_YELLOW) + "     " + c("🦦 Sea-Otter DevSweep Engine", Color.BOLD, Color.BRIGHT_CYAN) + " " + c("v1.0.0", Color.DIM)
-        line4 = c("     \\  (o) (o) /", Color.BRIGHT_YELLOW) + "     " + c("像海獭梳理皮毛一样，时刻保持开发者环境的整洁与安全", Color.YELLOW)
-        line5 = c("      :   (_)   :", Color.BRIGHT_YELLOW)
-        line6 = c("       \\   -   /", Color.BRIGHT_YELLOW) + "      " + c("https://github.com/yourwayai/sea-otter", Color.DIM)
-        line7 = c("      .-'     '-.", Color.BRIGHT_CYAN)
-        line8 = c("     /   ", Color.BRIGHT_CYAN) + c("[ >_ ]", Color.BOLD, Color.GREEN) + c("  \\", Color.BRIGHT_CYAN)
-        line9 = c("    :             :", Color.BRIGHT_CYAN)
-        line10 = c("   ~\"\"~\"\"~\"\"~\"\"~\"\"~\"\"~", Color.CYAN)
-        print(f"\n{line1}\n{line2}\n{line3}\n{line4}\n{line5}\n{line6}\n{line7}\n{line8}\n{line9}\n{line10}\n")
+        W = Color.BRIGHT_WHITE
+        Y = Color.BRIGHT_YELLOW
+        C = Color.BRIGHT_CYAN
+        G = Color.BRIGHT_GREEN
+        D = Color.DIM
+
+        art = [
+            "               " + c(".---.", Y) + "          " + c(".---.", Y),
+            "              " + c("/     \\________/     \\", Y) + "        " + c("🦦 Sea-Otter DevSweep Engine", Color.BOLD, C) + " " + c("v1.0.0", D),
+            "             " + c("|   .-.          .-.   |", Y) + "       " + c("面向新一代 AI 编程工具与 Agent CLI 的精细化体检清理", Color.YELLOW),
+            "            " + c("/   (   )        (   )   \\", Y) + "      " + c("Clean AI tools like an otter grooms its fur!", D),
+            "           " + c("/     '-'          '-'     \\", Y),
+            "          " + c("|      ", Y) + c("[■]", W) + c("            ", Y) + c("[■]", W) + c("      |", Y) + "      " + c("GitHub: ", D) + c("https://github.com/yourwayai/sea-otter", C),
+            "        " + c("==|              ▲             |==", Y) + "     " + c("Core:   ", D) + c("Process Guards · Git Immunity · Trash Safe", Color.GREEN),
+            "       " + c("=== \\           ( ω )          / ===", Y),
+            "            " + c("\\          \\___/          /", Y),
+            "            " + c("/    ", Y) + c(".--------------.", C) + c("    \\", Y) + "   " + c("//", C),
+            "           " + c("/    ", Y) + c("/  ", C) + c(">_", Color.BOLD, G) + c("          \\", C) + c("    \\", Y) + " " + c("//", C),
+            "         " + c("((", W) + c("    ", Y) + c("|  ", C) + c("DevSweep Clean", D) + c("  |", C) + c("    ", Y) + c("))", W),
+            "          " + c("))", W) + c("   ", Y) + c("\\              /", C) + c("   ", Y) + c("((", W),
+            "         " + c("''", W) + c("     ", Y) + c("'--------------'", C) + c("     ", Y) + c("''", W),
+            "       " + c("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~", C),
+            "         " + c("~~~~~~\"\"\"\"~~~~~~\"\"\"\"~~~~~~\"\"\"\"~~~~", Color.CYAN)
+        ]
+        print("\n" + "\n".join("  " + l for l in art) + "\n")
     else:
         banner = f"""
 {c("  🦦 Sea-Otter DevSweep Engine", Color.BOLD, Color.BRIGHT_CYAN)} {c("v1.0.0", Color.DIM)}
