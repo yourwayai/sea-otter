@@ -1,0 +1,49 @@
+id: workbuddy
+name: WorkBuddy AI
+category: desktop-agent
+vendor: Tencent / WorkBuddy
+homepage: https://www.workbuddy.ai
+detection:
+  app_bundle_id:
+    - com.workbuddy.workbuddy
+    - dev.genie.workbuddy
+  app_paths:
+    - /Applications/WorkBuddy.app
+
+targets:
+  credentials:
+    - path: ~/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop-ai.info
+      description: "核心 OAuth 访问令牌与账号信息"
+      default_selected: true
+      contains_secrets: true
+  configs:
+    - path: ~/.workbuddy
+      description: "主配置与技能目录"
+      default_selected: false
+    - path: ~/.workbuddy-key-fallback
+      description: "备用鉴权目录"
+      default_selected: false
+  data_and_history:
+    - path: ~/.workbuddy-ai
+      description: "历史工作区数据库、日志与 SQLite 存储"
+      default_selected: true
+    - path: ~/Library/Application Support/WorkBuddy
+      description: "应用持久化存储"
+      default_selected: true
+    - path: ~/Library/Application Support/WorkBuddyExtension
+      description: "配套扩展组件"
+      default_selected: true
+    - path: ~/Library/Application Support/@genie/workbuddy-desktop
+      description: "桌面运行时数据"
+      default_selected: true
+  preferences:
+    - path: ~/Library/Preferences/ByHost/com.workbuddy.workbuddy.ShipIt.*.plist
+      description: "更新偏好设置"
+      default_selected: true
+
+safety:
+  protect_git_repos: true
+  exclude_paths:
+    - ~/Documents
+    - ~/Desktop
+    - ~/Projects

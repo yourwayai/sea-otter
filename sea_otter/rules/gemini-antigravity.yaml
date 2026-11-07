@@ -1,0 +1,50 @@
+id: gemini-antigravity
+name: Google Antigravity & Gemini CLI
+category: ide
+vendor: Google DeepMind
+homepage: https://github.com/google-gemini
+detection:
+  app_bundle_id:
+    - com.google.antigravity
+  cli_binaries:
+    - ~/.gemini/bin/agy
+
+targets:
+  binaries_and_scripts:
+    - path: ~/.gemini/bin
+      description: "Antigravity CLI (agy) 可执行程序"
+      default_selected: true
+  credentials:
+    - path: ~/.gemini/google_accounts.json
+      description: "激活的 Google 账号"
+      default_selected: true
+      contains_secrets: true
+    - path: ~/.gemini/oauth_creds.json
+      description: "OAuth Refresh Token 及鉴权凭据"
+      default_selected: true
+      contains_secrets: true
+    - path: ~/.gemini/jetski-standalone-oauth-token
+      description: "独立 Token 凭据"
+      default_selected: true
+      contains_secrets: true
+  configs:
+    - path: ~/.gemini/settings.json
+      description: "全局环境与 MCP 服务设置"
+      default_selected: false
+    - path: ~/.gemini/config
+      description: "插件与扩展配置"
+      default_selected: false
+  data_and_history:
+    - path: ~/.gemini/antigravity
+      description: "运行时数据与任务历史"
+      default_selected: true
+    - path: ~/Library/Application Support/com.google.GeminiMacOS
+      description: "桌面端系统支持数据"
+      default_selected: true
+
+safety:
+  protect_git_repos: true
+  exclude_paths:
+    - ~/Documents
+    - ~/Desktop
+    - ~/Projects

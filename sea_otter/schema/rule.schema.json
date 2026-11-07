@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://devsweep.dev/schemas/v1/rule.schema.json",
+  "title": "DevSweepRule",
+  "description": "Rule specification for detecting and cleaning AI & developer tools",
+  "type": "object",
+  "required": ["id", "name", "category", "targets"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "Unique identifier, lowercase with hyphens (e.g., 'workbuddy', 'alma')"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable tool name (e.g., 'WorkBuddy AI')"
+    },
+    "category": {
+      "type": "string",
+      "enum": ["ide", "cli-agent", "desktop-agent", "runtime", "extension"],
+      "description": "Category of the developer tool"
+    },
+    "vendor": {
+      "type": "string",
+      "description": "Vendor or developer name"
+    },
+    "homepage": {
+      "type": "string",
+      "format": "uri",
+      "description": "Official project website or repository URL"
+    },
+    "detection": {
+      "type": "object",
+      "description": "Signals to determine if the software is actively installed",
+      "properties": {
+        "app_bundle_id": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "macOS bundle IDs (e.g., com.yetone.alma)"
+        },
+        "app_paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Application bundle locations (e.g., /Applications/Alma.app)"
+        },
+        "cli_binaries": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "CLI binaries or symlinks (e.g., ~/.local/bin/alma)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "targets": {
+      "type": "object",
+      "description": "Categorized target cleanup paths",
+      "properties": {
+        "caches": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/targetItem" },
+          "description": "Temporary cache files safe to delete"
+        },
+        "preferences": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/targetItem" },
+          "description": "Window state, plists, and UI settings"
+        },
+        "credentials": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/targetItem" },
+          "description": "OAuth tokens, refresh tokens, active credentials"
+        },
+        "data_and_history": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/targetItem" },
+          "description": "Session databases, chat logs, persistent runtime data"
+        },
+        "configs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/targetItem" },
+          "description": "Settings, skills, and configuration files"
+        },
+        "binaries_and_scripts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/targetItem" },
+          "description": "Installed CLI scripts and executable wrappers"
+        }
+      },
+      "additionalProperties": false
+    },
+    "safety": {
+      "type": "object",
+      "description": "Safety policies and path exclusions",
+      "properties": {
+        "protect_git_repos": {
+          "type": "boolean",
+          "default": true,
+          "description": "Block deletion if target contains a .git repository"
+        },
+        "exclude_paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Explicit paths strictly protected from cleanup"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "targetItem": {
+      "type": "object",
+      "required": ["path", "description"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Target path, supporting ~ and glob wildcards"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of what this target stores"
+        },
+        "default_selected": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether this item is pre-selected for cleanup in interactive mode"
+        },
+        "contains_secrets": {
+          "type": "boolean",
+          "default": false,
+          "description": "Flags whether this path stores credentials, tokens, or private secrets"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

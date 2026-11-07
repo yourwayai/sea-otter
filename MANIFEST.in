@@ -1,0 +1,6 @@
+include README.md
+include LICENSE
+recursive-include sea_otter/rules *.yaml
+recursive-include sea_otter/schema *.json
+recursive-include rules *.yaml
+recursive-include schema *.json

@@ -1,0 +1,44 @@
+id: alma
+name: Alma
+category: desktop-agent
+vendor: Yetone
+homepage: https://github.com/yetone
+detection:
+  app_bundle_id:
+    - com.yetone.alma
+  app_paths:
+    - /Applications/Alma.app
+  cli_binaries:
+    - ~/.local/bin/alma
+
+targets:
+  binaries_and_scripts:
+    - path: ~/.local/bin/alma
+      description: "CLI 脚本入口"
+      default_selected: true
+  configs:
+    - path: ~/.config/alma
+      description: "Agent 技能库与配置"
+      default_selected: false
+  caches:
+    - path: ~/.cache/alma
+      description: "运行时临时缓存"
+      default_selected: true
+  data_and_history:
+    - path: ~/Library/Application Support/alma
+      description: "历史会话数据库 (chat_threads.db) 与工作区"
+      default_selected: true
+  preferences:
+    - path: ~/Library/Preferences/com.yetone.alma.plist
+      description: "系统偏好设置"
+      default_selected: true
+    - path: ~/Library/Preferences/ByHost/com.yetone.alma.ShipIt.*.plist
+      description: "自动更新组件偏好"
+      default_selected: true
+
+safety:
+  protect_git_repos: true
+  exclude_paths:
+    - ~/Documents
+    - ~/Desktop
+    - ~/Projects

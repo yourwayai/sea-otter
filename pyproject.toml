@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sea-otter"
+version = "1.0.0"
+description = "面向新一代 AI 编程工具与 Agent CLI 的精细化清理与体检工具 (DevSweep Engine)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "Sea-Otter Contributors" }
+]
+keywords = [
+    "cleanup",
+    "developer-tools",
+    "ai-agents",
+    "cursor",
+    "codex",
+    "claude-code",
+    "ollama",
+    "devsweep"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Utilities"
+]
+
+dependencies = [
+    "pyyaml>=5.3"
+]
+
+[project.scripts]
+sea-otter = "sea_otter.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/milong/sea-otter"
+Repository = "https://github.com/milong/sea-otter"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sea_otter*"]
+
+[tool.setuptools.package-data]
+sea_otter = [
+    "rules/*.yaml",
+    "schema/*.json"
+]

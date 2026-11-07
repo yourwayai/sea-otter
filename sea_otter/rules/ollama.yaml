@@ -1,0 +1,75 @@
+id: ollama
+name: Ollama
+category: runtime
+vendor: Ollama
+homepage: https://ollama.com
+detection:
+  app_bundle_id:
+    - com.electron.ollama
+  app_paths:
+    - /Applications/Ollama.app
+  cli_binaries:
+    - /usr/local/bin/ollama
+    - /opt/homebrew/bin/ollama
+    - ~/.local/bin/ollama
+
+targets:
+  binaries_and_scripts:
+    - path: /usr/local/bin/ollama
+      description: "系统级 Ollama CLI 二进制"
+      default_selected: true
+    - path: /opt/homebrew/bin/ollama
+      description: "Homebrew 安装的 Ollama CLI"
+      default_selected: true
+    - path: ~/.local/bin/ollama
+      description: "用户级 Ollama CLI"
+      default_selected: true
+  credentials:
+    - path: ~/.ollama/id_ed25519
+      description: "Ollama 模型注册表私钥凭据 (用于模型推送认证)"
+      default_selected: true
+      contains_secrets: true
+    - path: ~/.ollama/id_ed25519.pub
+      description: "Ollama 身份公钥"
+      default_selected: true
+  configs:
+    - path: ~/.ollama/config.json
+      description: "Ollama 全局参数配置"
+      default_selected: false
+  data_and_history:
+    - path: ~/.ollama/models
+      description: "本地大语言模型权重与清单 (Blobs & Manifests，通常数 GB 至数十 GB)"
+      default_selected: true
+    - path: ~/.ollama/history
+      description: "命令行交互式对话历史"
+      default_selected: true
+    - path: ~/Library/Application Support/Ollama
+      description: "Ollama 桌面端数据、配置与 SQLite 状态库"
+      default_selected: true
+  caches:
+    - path: ~/.ollama/cache
+      description: "模型下载断点临时缓存"
+      default_selected: true
+    - path: ~/.ollama/logs
+      description: "Ollama 服务端运行日志"
+      default_selected: true
+    - path: ~/Library/Application Support/Ollama/Cache
+      description: "桌面客户端缓存"
+      default_selected: true
+    - path: ~/Library/Application Support/Ollama/Code Cache
+      description: "桌面端渲染代码缓存"
+      default_selected: true
+  preferences:
+    - path: ~/Library/Preferences/com.electron.ollama.plist
+      description: "桌面端窗口与开机自启偏好设置"
+      default_selected: true
+    - path: ~/Library/Preferences/ByHost/com.electron.ollama.ShipIt.*.plist
+      description: "更新组件偏好"
+      default_selected: true
+
+safety:
+  protect_git_repos: true
+  exclude_paths:
+    - ~/Documents
+    - ~/Desktop
+    - ~/Projects

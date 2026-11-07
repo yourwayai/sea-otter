@@ -1,0 +1,33 @@
+id: codex
+name: OpenAI Codex CLI
+category: cli-agent
+vendor: OpenAI
+homepage: https://openai.com
+detection:
+  cli_binaries:
+    - ~/.local/bin/codex
+    - /usr/local/bin/codex
+
+targets:
+  credentials:
+    - path: ~/.codex/auth.json
+      description: "OpenAI 授权与 Access Token"
+      default_selected: true
+      contains_secrets: true
+  data_and_history:
+    - path: ~/.codex/logs_2.sqlite
+      description: "运行任务历史数据库"
+      default_selected: true
+    - path: ~/.codex/thread_history_1.sqlite
+      description: "历史对话 SQLite"
+      default_selected: true
+    - path: ~/.codex
+      description: "全局状态与项目上下文快照"
+      default_selected: true
+
+safety:
+  protect_git_repos: true
+  exclude_paths:
+    - ~/Documents
+    - ~/Desktop
+    - ~/Projects

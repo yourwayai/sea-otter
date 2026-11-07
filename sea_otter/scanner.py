@@ -48,32 +48,55 @@ class ToolScanReport:
 
 class RuleScanner:
     def __init__(self, rules_dir: Optional[str] = None):
-        if rules_dir is None:
-            # 默认指向当前项目下的 rules 目录
+        self.rules_dirs = []
+        if rules_dir:
+            self.rules_dirs.append(rules_dir)
+        else:
+            # 1. 环境变量自定义规则目录
+            env_dir = os.environ.get("SEA_OTTER_RULES_DIR")
+            if env_dir and os.path.isdir(env_dir):
+                self.rules_dirs.append(env_dir)
+
+            # 2. 包内置规则目录 (pip 安装后)
+            pkg_rules = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rules")
+            if os.path.isdir(pkg_rules):
+                self.rules_dirs.append(pkg_rules)
+
+            # 3. 源码开发根目录 rules
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            rules_dir = os.path.join(base_dir, "rules")
-        self.rules_dir = rules_dir
+            repo_rules = os.path.join(base_dir, "rules")
+            if os.path.isdir(repo_rules) and repo_rules not in self.rules_dirs:
+                self.rules_dirs.append(repo_rules)
+
+            # 4. 用户家目录自定义规则 (~/.config/sea-otter/rules)
+            user_rules = os.path.expanduser("~/.config/sea-otter/rules")
+            if os.path.isdir(user_rules) and user_rules not in self.rules_dirs:
+                self.rules_dirs.append(user_rules)
+
         self._bundle_cache: Optional[Dict[str, str]] = None
 
     def load_rules(self, filter_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        """加载所有或指定 ID 的 YAML 规则"""
-        if not os.path.isdir(self.rules_dir):
-            return []
-        
-        rule_files = sorted(glob.glob(os.path.join(self.rules_dir, "*.yaml")))
-        rules = []
-        for rf in rule_files:
-            try:
-                with open(rf, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f)
-                    if data and isinstance(data, dict):
-                        rule_id = data.get("id")
-                        if filter_ids and rule_id not in filter_ids:
-                            continue
-                        rules.append(data)
-            except Exception as e:
-                print(f"警告: 读取规则文件 {rf} 失败: {e}")
-        return rules
+        """加载所有或指定 ID 的 YAML 规则，支持多目录合并与 ID 去重"""
+        rule_map = {}
+        for r_dir in self.rules_dirs:
+            if not os.path.isdir(r_dir):
+                continue
+            rule_files = sorted(glob.glob(os.path.join(r_dir, "*.yaml")))
+            for rf in rule_files:
+                try:
+                    with open(rf, "r", encoding="utf-8") as f:
+                        data = yaml.safe_load(f)
+                        if data and isinstance(data, dict):
+                            rule_id = data.get("id")
+                            if not rule_id:
+                                continue
+                            if filter_ids and rule_id not in filter_ids:
+                                continue
+                            # 后面的规则目录覆盖前面的同名规则
+                            rule_map[rule_id] = data
+                except Exception as e:
+                    print(f"警告: 读取规则文件 {rf} 失败: {e}")
+        return list(rule_map.values())
 
     def _get_path_size_and_count(self, path: str) -> tuple[int, int]:
         """计算单个文件或目录的大小与文件总数"""
