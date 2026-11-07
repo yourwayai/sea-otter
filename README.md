@@ -58,16 +58,64 @@ sea-otter/
 
 ---
 
+## 💻 CLI 使用指南
+
+无需复杂的配置，直接在终端执行即可：
+
+### 1. 扫描与体检 (`scan`)
+```bash
+# 默认扫描所有规则，并输出占用空间与软件状态报告
+./sea-otter scan
+
+# 仅扫描指定的一个或多个工具
+./sea-otter scan cursor codex claude-code
+
+# 显示所有工具（包含未安装且整洁无残留的项）
+./sea-otter scan --all
+
+# 以 JSON 格式输出（供 Raycast 插件或第三方脚本调用）
+./sea-otter scan --json
+```
+
+### 2. 安全清理 (`clean`)
+默认所有被删除的目标都将**安全移入 macOS 废纸篓（Trash）**，用户随时可以“放回原处”，杜绝误删风险：
+
+```bash
+# Dry-run 模拟预览（只读，不修改任何文件系统）
+./sea-otter clean --dry-run
+./sea-otter clean cursor --dry-run
+
+# 仅清理纯缓存（Cache）
+./sea-otter clean --category caches --dry-run
+
+# 包含敏感凭据一起清理（默认会保护跳过 Token/密钥）
+./sea-otter clean cursor --include-secrets
+
+# 免交互确认直接清理
+./sea-otter clean cursor -y
+```
+
+### 3. 规则库查看与校验 (`rules`)
+```bash
+# 查看内置收录的工具规则列表
+./sea-otter rules list
+
+# 校验所有规则的 YAML 规范与字段完整性
+./sea-otter rules validate
+```
+
+---
+
 ## 🚀 规划路线 (Roadmap)
 
-- [x] **Phase 1: 规范定义与首批实测指纹库沉淀** (v1.0 Schema + 6 款核心工具)
-- [ ] **Phase 2: 本地扫描与空间统计引擎 (MVP Scanner)**
-  - 支持双态检测
-  - 递归精确计算占用容量
+- [x] **Phase 1: 规范定义与首批实测指纹库沉淀** (v1.0 Schema + 12 款主流核心工具)
+- [x] **Phase 2: 本地扫描与空间统计引擎 (MVP Scanner & CLI)**
+  - 支持双态检测 (`已安装` vs `孤儿残留`)
+  - 递归精确计算占用容量（智能嵌套路径去重）
   - Dry-run 只读预览与终端彩色展示
-- [ ] **Phase 3: 交互式安全清理执行器**
-  - 支持系统废纸篓安全软删除（Trash）
-  - 敏感 Token 特殊警示与二次确认
-- [ ] **Phase 4: 规则社区生态与多端交付**
-  - Raycast 插件扩展 / 菜单栏轻量监控
-  - 规则在线动态同步更新
+  - `.git` 仓库保护与用户关键根目录拦截防线
+  - 移入 macOS 系统废纸篓安全删除机制
+- [ ] **Phase 3: 规则社区生态与多端交付**
+  - Raycast 插件扩展（基于 `--json` 输出快速构建）
+  - Homebrew 自动化打包与发布
+  - 规则在线动态同步更新 (`sea-otter update`)
