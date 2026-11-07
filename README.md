@@ -1,7 +1,13 @@
-# Sea-Otter 🦦 (DevSweep Engine)
+<p align="center">
+  <img src="assets/logo.png" alt="Sea-Otter Logo" width="180" style="border-radius: 20px;">
+</p>
 
-> 面向新一代 AI 编程工具与开发者 CLI/Agent 的精细化清理与体检工具。  
-> 像海獭（Sea Otter）梳理皮毛一样，时刻保持开发者环境的整洁与安全。
+<h1 align="center">Sea-Otter 🦦</h1>
+
+<p align="center">
+  <strong>DevSweep Engine · 面向新一代 AI 编程工具与开发者 CLI/Agent 的精细化清理与体检工具</strong><br>
+  <em>像海獭（Sea Otter）梳理皮毛一样，时刻保持开发者环境的整洁与安全。</em>
+</p>
 
 ---
 
@@ -19,6 +25,8 @@
 
 ```text
 sea-otter/
+├── assets/                      # 项目资源（Logo 图标等）
+│   └── logo.png
 ├── schema/
 │   └── rule.schema.json         # 规则库 JSON Schema 规范 (v1.0)
 ├── rules/                       # 各大 AI/开发者工具精细化指纹规则 (YAML)
