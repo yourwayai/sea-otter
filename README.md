@@ -64,6 +64,52 @@ sea-otter/
    - `binaries_and_scripts`: CLI 软链接与入口脚本
 4. **安全防线（Safety Guard）**：强制 `.git` 仓库保护与核心用户主目录防伤拦截。
 
+## 📦 安装与配置 (Installation)
+
+### 方式 1: 直接从 GitHub 一键安装 (推荐)
+
+无需下载源码，直接使用 `pip` 或 `pipx` 即可安装到系统中：
+
+```bash
+# 使用 pip 安装到当前用户空间
+pip install --user git+https://github.com/yourwayai/sea-otter.git
+
+# 或者使用 pipx 进行独立环境隔离安装
+pipx install git+https://github.com/yourwayai/sea-otter.git
+```
+
+> **提示**：安装完成后，请确保 `~/.local/bin` 或 `~/Library/Python/3.x/bin` 已在您的系统 `PATH` 中。
+
+---
+
+### 方式 2: 源码克隆与本地安装 (开发者模式)
+
+如果您希望本地调试或为 Sea-Otter 贡献规则：
+
+```bash
+# 1. 克隆代码仓库
+git clone https://github.com/yourwayai/sea-otter.git
+cd sea-otter
+
+# 2. 安装并注册全局命令
+pip install --user .
+
+# 3. 挂载到本地 PATH (可选，便于在任意目录执行)
+ln -sf $(python3 -m site --user-base)/bin/sea-otter ~/.local/bin/sea-otter
+```
+
+---
+
+### 方式 3: 免安装直接运行 (Zero Install)
+
+克隆项目后直接执行根目录的脚本即可：
+
+```bash
+git clone https://github.com/yourwayai/sea-otter.git
+cd sea-otter
+./sea-otter scan
+```
+
 ---
 
 ## 💻 CLI 使用指南
