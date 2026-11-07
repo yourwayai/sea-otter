@@ -1,0 +1,38 @@
+id: kiro
+name: Kiro
+category: ide
+vendor: Kiro.dev
+homepage: https://kiro.dev
+detection:
+  app_bundle_id:
+    - dev.kiro.desktop
+  app_paths:
+    - /Applications/Kiro.app
+
+targets:
+  configs:
+    - path: ~/.kiro
+      description: "VS Code 分支配置、扩展与 skills"
+      default_selected: false
+  data_and_history:
+    - path: ~/Library/Application Support/Kiro
+      description: "核心会话、Cookies、扩展安装目录"
+      default_selected: true
+  caches:
+    - path: ~/Library/HTTPStorages/dev.kiro.desktop
+      description: "网络传输缓存"
+      default_selected: true
+  preferences:
+    - path: ~/Library/Preferences/dev.kiro.desktop.plist
+      description: "窗口与偏好设置"
+      default_selected: true
+    - path: ~/Library/Preferences/ByHost/dev.kiro.desktop.ShipIt.*.plist
+      description: "更新配置"
+      default_selected: true
+
+safety:
+  protect_git_repos: true
+  exclude_paths:
+    - ~/Documents
+    - ~/Desktop
+    - ~/Projects

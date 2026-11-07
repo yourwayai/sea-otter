@@ -1,0 +1,27 @@
+id: claude-code
+name: Claude Code
+category: cli-agent
+vendor: Anthropic
+homepage: https://anthropic.com
+detection:
+  cli_binaries:
+    - ~/.local/bin/claude
+    - /usr/local/bin/claude
+
+targets:
+  credentials:
+    - path: ~/.claude/settings.json
+      description: "Anthropic 鉴权与配置"
+      default_selected: true
+      contains_secrets: true
+  data_and_history:
+    - path: ~/.claude
+      description: "会话历史、项目上下文与成本统计"
+      default_selected: true
+
+safety:
+  protect_git_repos: true
+  exclude_paths:
+    - ~/Documents
+    - ~/Desktop
+    - ~/Projects
