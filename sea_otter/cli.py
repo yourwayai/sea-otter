@@ -262,6 +262,96 @@ def main():
 
     args = parser.parse_args()
 
+def cmd_interactive_dashboard(scanner: RuleScanner):
+    """交互式控制台菜单 (当用户仅输入 `sea-otter` 时启动)"""
+    print_banner(full=True)
+
+    print(c("📋 欢迎进入 Sea-Otter 交互式控制台！请选择操作模式：", Color.BOLD))
+    print()
+    print(f"  {c('1', Color.BOLD, Color.BRIGHT_CYAN)}  🔍 全盘扫描体检 (输出 AI 工具安装状态与孤儿残留占用)")
+    print(f"  {c('2', Color.BOLD, Color.BRIGHT_GREEN)}  🛡️ 安全清理预览 (Dry-run 模拟预览哪些文件会被移入废纸篓)")
+    print(f"  {c('3', Color.BOLD, Color.BRIGHT_YELLOW)}  🧹 一键清理缓存 (安全清理所有纯缓存，移入废纸篓)")
+    print(f"  {c('4', Color.BOLD, Color.MAGENTA)}  📋 查看收录规则 (浏览当前收录的 14 款 AI 工具规则清单)")
+    print(f"  {c('5', Color.BOLD, Color.WHITE)}  🌐 访问官方仓库 (打开 GitHub 仓库主页)")
+    print(f"  {c('q', Color.DIM)}  🚪 退出程序")
+    print()
+
+    try:
+        choice = input(c("👉 请输入序号 [1-5 或 q]: ", Color.BOLD, Color.YELLOW)).strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        print("\n👋 已退出。")
+        return
+
+    print()
+    if choice == "1":
+        class DummyArgs:
+            tools = []
+            show_all = False
+            json = False
+        cmd_scan(DummyArgs(), scanner)
+    elif choice == "2":
+        class DummyCleanArgs:
+            tools = []
+            category = None
+            dry_run = True
+            include_secrets = False
+            yes = False
+        cmd_clean(DummyCleanArgs(), scanner)
+    elif choice == "3":
+        class DummyCleanCacheArgs:
+            tools = []
+            category = "caches"
+            dry_run = False
+            include_secrets = False
+            yes = False
+        cmd_clean(DummyCleanCacheArgs(), scanner)
+    elif choice == "4":
+        class DummyRulesArgs:
+            rule_action = "list"
+        cmd_rules(DummyRulesArgs(), scanner)
+    elif choice == "5":
+        import webbrowser
+        print(c("🚀 正在为您打开官方仓库: https://github.com/yourwayai/sea-otter", Color.CYAN))
+        webbrowser.open("https://github.com/yourwayai/sea-otter")
+    elif choice in ["q", "quit", "exit"]:
+        print(c("🦦 保持好心情，下次再见！", Color.GREEN))
+    else:
+        print(c("⚠️ 无效的选项，默认执行全盘扫描体检：", Color.YELLOW))
+        class DummyArgs:
+            tools = []
+            show_all = False
+            json = False
+        cmd_scan(DummyArgs(), scanner)
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="sea-otter",
+        description="🦦 Sea-Otter: 面向新一代 AI 编程工具与 Agent CLI 的精细化清理与体检工具"
+    )
+    parser.add_argument("--version", action="version", version="Sea-Otter v1.0.0")
+
+    subparsers = parser.add_subparsers(dest="command", help="可用子命令 (留空进入交互式主菜单)")
+
+    # scan
+    p_scan = subparsers.add_parser("scan", help="扫描系统中的 AI 开发者工具状态与残留占用")
+    p_scan.add_argument("tools", nargs="*", help="指定要扫描的工具 ID (如 cursor, codex)，默认扫描全部")
+    p_scan.add_argument("-a", "--all", dest="show_all", action="store_true", help="显示所有工具（包含未安装且无残留项）")
+    p_scan.add_argument("--json", action="store_true", help="以 JSON 格式输出扫描结果")
+
+    # clean
+    p_clean = subparsers.add_parser("clean", help="安全清理指定的工具残留或缓存 (移入废纸篓)")
+    p_clean.add_argument("tools", nargs="*", help="指定要清理的工具 ID (可选)")
+    p_clean.add_argument("-c", "--category", help="按分类过滤 (如 caches,data_and_history)")
+    p_clean.add_argument("-n", "--dry-run", action="store_true", help="只读模式，仅预览待清理目标与空间，不进行实际移动")
+    p_clean.add_argument("--include-secrets", action="store_true", help="允许清理敏感凭证 (如 Token/API 密钥)，默认安全跳过")
+    p_clean.add_argument("-y", "--yes", action="store_true", help="无需交互确认，直接移入废纸篓")
+
+    # rules
+    p_rules = subparsers.add_parser("rules", help="查看或校验内置规则库")
+    p_rules.add_argument("rule_action", choices=["list", "validate"], default="list", nargs="?", help="list (查看列表) 或 validate (校验规则规范)")
+
+    args = parser.parse_args()
+
     scanner = RuleScanner()
 
     if args.command == "scan":
@@ -271,11 +361,9 @@ def main():
     elif args.command == "rules":
         cmd_rules(args, scanner)
     else:
-        # 默认执行 scan
-        args.tools = []
-        args.show_all = False
-        args.json = False
-        cmd_scan(args, scanner)
+        # 当直接输入 `sea-otter` 时，进入带吉祥物形象和功能目录的交互界面
+        cmd_interactive_dashboard(scanner)
 
 if __name__ == "__main__":
     main()
+
