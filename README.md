@@ -9,6 +9,12 @@
   <em>像海獭（Sea Otter）梳理皮毛一样，时刻保持开发者环境的整洁与安全。</em>
 </p>
 
+<p align="center">
+  <a href="https://github.com/yourwayai/sea-otter/releases"><img src="https://img.shields.io/badge/version-1.0.0-blue.svg" alt="Version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License"></a>
+  <a href="README_EN.md"><img src="https://img.shields.io/badge/docs-English-blue.svg" alt="English Documentation"></a>
+</p>
+
 ---
 
 ## 🌟 为什么需要 Sea-Otter？
