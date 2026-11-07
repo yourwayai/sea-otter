@@ -89,8 +89,8 @@ def validate_target_safety(target_path: str, rule_safety: Optional[dict] = None)
         exclude_paths = rule_safety.get("exclude_paths", [])
         for ex in exclude_paths:
             ex_norm = normalize_path(ex)
-            # 如果目标路径与排除路径完全匹配，或目标路径是排除路径的父目录/包含排除路径
-            if normalized == ex_norm or ex_norm.startswith(normalized + os.sep):
+            # 如果目标路径与排除路径完全匹配，或者目标路径在排除路径内部，或者目标路径是排除路径的父目录
+            if normalized == ex_norm or normalized.startswith(ex_norm + os.sep) or ex_norm.startswith(normalized + os.sep):
                 return False, f"命中了规则中配置的严格排除路径: {ex}"
 
     # 5. 代码工程与工作区“强制免疫”（.git / .svn / .obsidian）

@@ -27,7 +27,7 @@ class SafeCleaner:
         self._trash_bin = "/usr/bin/trash" if os.path.exists("/usr/bin/trash") else shutil.which("trash")
 
     def _move_to_trash(self, path: str) -> Tuple[bool, str]:
-        """将文件或目录安全移入 macOS 废纸篓"""
+        """将文件或目录安全移入系统废纸篓 (Trash)"""
         if not os.path.exists(path):
             return True, "目标已不存在"
 
@@ -38,11 +38,22 @@ class SafeCleaner:
                 proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                 if proc.returncode == 0:
                     return True, "已移入系统废纸篓 (via trash)"
-                # 如果 exit code 不为 0，尝试 AppleScript
+                # 如果 exit code 不为 0，尝试备用方案
             except Exception as e:
                 pass
 
-        # 备用方式: 使用 AppleScript 调用 Finder 将其移至废纸篓
+        # 备用方式 1: 使用 Linux gio trash (Freedesktop Trash 规范)
+        gio_bin = shutil.which("gio")
+        if gio_bin:
+            try:
+                cmd = [gio_bin, "trash", path]
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                if proc.returncode == 0:
+                    return True, "已移入系统废纸篓 (via gio trash)"
+            except Exception:
+                pass
+
+        # 备用方式 2: 使用 AppleScript 调用 Finder 将其移至废纸篓 (macOS)
         try:
             # 区分文件和文件夹
             item_type = "folder" if os.path.isdir(path) else "file"

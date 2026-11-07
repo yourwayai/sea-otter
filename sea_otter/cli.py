@@ -176,7 +176,7 @@ def cmd_clean(args, scanner: RuleScanner):
     # 交互确认
     if not args.yes:
         print()
-        confirm = input(f"确认将上述 {len(candidates)} 项移入 macOS 废纸篓吗？[y/N]: ").strip().lower()
+        confirm = input(f"确认将上述 {len(candidates)} 项移入系统废纸篓吗？[y/N]: ").strip().lower()
         if confirm not in ["y", "yes"]:
             print(c("🚫 已取消清理操作。", Color.YELLOW))
             return
@@ -204,7 +204,7 @@ def cmd_clean(args, scanner: RuleScanner):
     print()
     print(c("═" * 68, Color.DIM))
     print(f"✨ {c('清理完成!', Color.BOLD, Color.GREEN)} 成功处理 {c(str(success_count), Color.BOLD)}/{len(candidates)} 项，已释放空间: {c(format_size(freed_size), Color.BOLD, Color.BRIGHT_GREEN)}")
-    print(f"{c('💡 提示:', Color.DIM)} 所有文件已移入 macOS 废纸篓，可在废纸篓中随时“放回原处”。")
+    print(f"{c('💡 提示:', Color.DIM)} 所有文件已移入系统废纸篓，可在废纸篓中随时“放回原处”。")
 
 def cmd_rules(args, scanner: RuleScanner):
     """规则管理命令"""
