@@ -262,6 +262,45 @@ def main():
 
     args = parser.parse_args()
 
+def cmd_about():
+    """打印详细的项目关于信息 (About Sea-Otter)"""
+    print_banner(full=True)
+    
+    BOLD = Color.BOLD
+    W = Color.BRIGHT_WHITE
+    C = Color.BRIGHT_CYAN
+    Y = Color.YELLOW
+    G = Color.GREEN
+    DIM = Color.DIM
+
+    about_text = f"""
+{c("🦦 关于 Sea-Otter (DevSweep Engine)", BOLD, W)}
+{c("─" * 60, DIM)}
+{c("像海獭（Sea Otter）浮在水面梳理皮毛一样，时刻保持开发环境的清爽与安全。", Y)}
+
+{c("🌟 诞生背景：", BOLD, C)}
+在 AI 编程工具与 Agent CLI 爆发的时代，我们频繁尝鲜各类智能体工具（如 Claude Code,
+Codex, Cursor, Windsurf, Trae, Ollama 等）。但传统清理软件（如 CleanMyMac、AppCleaner）
+往往只能匹配应用安装包，面临严重的【三大痛点】：
+  1. {c("Dotfiles 盲区", BOLD)}：海量配置、会话数据库深藏于 ~/.claude, ~/.gemini, ~/.codex 等隐藏目录；
+  2. {c("孤儿残留堆积", BOLD)}：App 已拖入废纸篓，但后台守护进程、数 GB 的本地模型和 SQLite 数据库依然滞留；
+  3. {c("敏感凭证泄露", BOLD)}：大量明文的 OAuth Token、API Key 混杂在旧缓存中，形成长期的安全隐患。
+
+{c("🛡️ 核心安全防线：", BOLD, G)}
+  • {c("进程存活交叉验证", BOLD)}：严格核对系统活跃进程与单例锁，正在运行的工具强制锁定保护，绝不误杀。
+  • {c("代码工作区强制免疫", BOLD)}：探测到 .git, .svn, .obsidian 目录时，一律视为工程资产，绝对阻断删除。
+  • {c("默认系统废纸篓安全删除", BOLD)}：绝不执行暴力 rm -rf，优先移入系统废纸篓，随时可“放回原处”。
+  • {c("敏感凭据高危警示", BOLD)}：自动标记包含 API Key / 访问令牌的敏感文件，默认清理时自动跳过。
+
+{c("📌 项目元信息：", BOLD, W)}
+  • 版本号:   {c("v1.0.0 (Rule Schema v1.1)", BOLD)}
+  • 开发者:   {c("YourWay AI & Sea-Otter Contributors", C)}
+  • 开源协议: {c("MIT License", G)}
+  • 官方仓库: {c("https://github.com/yourwayai/sea-otter", C)}
+{c("─" * 60, DIM)}
+"""
+    print(about_text)
+
 def cmd_interactive_dashboard(scanner: RuleScanner):
     """交互式控制台菜单 (当用户仅输入 `sea-otter` 时启动)"""
     print_banner(full=True)
@@ -272,12 +311,13 @@ def cmd_interactive_dashboard(scanner: RuleScanner):
     print(f"  {c('2', Color.BOLD, Color.BRIGHT_GREEN)}  🛡️ 安全清理预览 (Dry-run 模拟预览哪些文件会被移入废纸篓)")
     print(f"  {c('3', Color.BOLD, Color.BRIGHT_YELLOW)}  🧹 一键清理缓存 (安全清理所有纯缓存，移入废纸篓)")
     print(f"  {c('4', Color.BOLD, Color.MAGENTA)}  📋 查看收录规则 (浏览当前收录的 14 款 AI 工具规则清单)")
-    print(f"  {c('5', Color.BOLD, Color.WHITE)}  🌐 访问官方仓库 (打开 GitHub 仓库主页)")
+    print(f"  {c('5', Color.BOLD, Color.BRIGHT_BLUE)}  ℹ️ 关于项目理念 (了解 Sea-Otter 诞生背景与安全设计)")
+    print(f"  {c('6', Color.BOLD, Color.WHITE)}  🌐 访问官方仓库 (打开 GitHub 仓库主页)")
     print(f"  {c('q', Color.DIM)}  🚪 退出程序")
     print()
 
     try:
-        choice = input(c("👉 请输入序号 [1-5 或 q]: ", Color.BOLD, Color.YELLOW)).strip().lower()
+        choice = input(c("👉 请输入序号 [1-6 或 q]: ", Color.BOLD, Color.YELLOW)).strip().lower()
     except (KeyboardInterrupt, EOFError):
         print("\n👋 已退出。")
         return
@@ -310,6 +350,8 @@ def cmd_interactive_dashboard(scanner: RuleScanner):
             rule_action = "list"
         cmd_rules(DummyRulesArgs(), scanner)
     elif choice == "5":
+        cmd_about()
+    elif choice == "6":
         import webbrowser
         print(c("🚀 正在为您打开官方仓库: https://github.com/yourwayai/sea-otter", Color.CYAN))
         webbrowser.open("https://github.com/yourwayai/sea-otter")
@@ -350,6 +392,9 @@ def main():
     p_rules = subparsers.add_parser("rules", help="查看或校验内置规则库")
     p_rules.add_argument("rule_action", choices=["list", "validate"], default="list", nargs="?", help="list (查看列表) 或 validate (校验规则规范)")
 
+    # about
+    subparsers.add_parser("about", help="显示 Sea-Otter 项目背景、设计哲学与安全防线说明")
+
     args = parser.parse_args()
 
     scanner = RuleScanner()
@@ -360,6 +405,8 @@ def main():
         cmd_clean(args, scanner)
     elif args.command == "rules":
         cmd_rules(args, scanner)
+    elif args.command == "about":
+        cmd_about()
     else:
         # 当直接输入 `sea-otter` 时，进入带吉祥物形象和功能目录的交互界面
         cmd_interactive_dashboard(scanner)
