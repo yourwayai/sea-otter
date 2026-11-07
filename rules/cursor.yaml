@@ -1,0 +1,98 @@
+id: cursor
+name: Cursor
+category: ide
+vendor: Anysphere
+homepage: https://cursor.com
+detection:
+  app_bundle_id:
+    - com.anysphere.cursor
+    - com.tyskr.cursor
+  app_paths:
+    - /Applications/Cursor.app
+  cli_binaries:
+    - /usr/local/bin/cursor
+    - ~/.local/bin/cursor
+
+targets:
+  binaries_and_scripts:
+    - path: /usr/local/bin/cursor
+      description: "Cursor CLI 入口脚本"
+      default_selected: true
+    - path: ~/.local/bin/cursor
+      description: "用户级 Cursor CLI 入口"
+      default_selected: true
+  credentials:
+    - path: ~/Library/Application Support/Cursor/User/globalStorage/storage.json
+      description: "用户会话 Token 与设备指纹状态"
+      default_selected: true
+      contains_secrets: true
+    - path: ~/Library/Application Support/Cursor/Cookies
+      description: "内置浏览器网络鉴权 Cookie"
+      default_selected: true
+      contains_secrets: true
+    - path: ~/Library/Application Support/Cursor/Trust Tokens
+      description: "身份信任令牌"
+      default_selected: true
+      contains_secrets: true
+  configs:
+    - path: ~/.cursor/argv.json
+      description: "运行环境参数配置"
+      default_selected: false
+    - path: ~/.cursor/skills
+      description: "Cursor Agent 技能库与自定义指令"
+      default_selected: false
+    - path: ~/Library/Application Support/Cursor/User/settings.json
+      description: "用户个人偏好与按键映射"
+      default_selected: false
+  data_and_history:
+    - path: ~/.cursor
+      description: "Cursor 插件扩展、Skills 与状态快照"
+      default_selected: true
+    - path: ~/Library/Application Support/Cursor
+      description: "工作区历史会话、日志与 SQLite 存储"
+      default_selected: true
+    - path: ~/Library/Saved Application State/com.anysphere.cursor.savedState
+      description: "应用窗口恢复状态"
+      default_selected: true
+    - path: ~/Library/Saved Application State/com.tyskr.cursor.savedState
+      description: "早期版本应用窗口恢复状态"
+      default_selected: true
+  caches:
+    - path: ~/Library/Caches/com.anysphere.cursor
+      description: "系统级缓存目录"
+      default_selected: true
+    - path: ~/Library/Caches/com.tyskr.cursor
+      description: "旧版系统级缓存目录"
+      default_selected: true
+    - path: ~/Library/HTTPStorages/com.anysphere.cursor
+      description: "网络请求传输缓存"
+      default_selected: true
+    - path: ~/Library/HTTPStorages/com.tyskr.cursor
+      description: "旧版网络请求传输缓存"
+      default_selected: true
+    - path: ~/Library/Application Support/Cursor/Cache
+      description: "应用内部运行时缓存"
+      default_selected: true
+    - path: ~/Library/Application Support/Cursor/Code Cache
+      description: "V8 编译字节码缓存"
+      default_selected: true
+    - path: ~/Library/Application Support/Cursor/GPUCache
+      description: "GPU 渲染缓存"
+      default_selected: true
+  preferences:
+    - path: ~/Library/Preferences/com.anysphere.cursor.plist
+      description: "应用全局偏好配置"
+      default_selected: true
+    - path: ~/Library/Preferences/com.tyskr.cursor.plist
+      description: "旧版应用偏好配置"
+      default_selected: true
+    - path: ~/Library/Preferences/ByHost/com.anysphere.cursor.ShipIt.*.plist
+      description: "自动更新组件偏好"
+      default_selected: true
+
+safety:
+  protect_git_repos: true
+  exclude_paths:
+    - ~/Documents
+    - ~/Desktop
+    - ~/Projects

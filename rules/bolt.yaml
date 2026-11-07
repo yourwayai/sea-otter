@@ -1,0 +1,48 @@
+id: bolt
+name: Bolt (bolt.new / Bolt.diy)
+category: cli-agent
+vendor: StackBlitz / Open Source
+homepage: https://bolt.new
+detection:
+  cli_binaries:
+    - ~/.local/bin/bolt
+    - /usr/local/bin/bolt
+
+targets:
+  credentials:
+    - path: ~/.bolt/config.json
+      description: "配置的 LLM API 密钥 (Anthropic / OpenAI 等)"
+      default_selected: true
+      contains_secrets: true
+    - path: ~/.bolt-diy/.env
+      description: "本地部署 Bolt.diy 环境变量与密钥"
+      default_selected: true
+      contains_secrets: true
+  configs:
+    - path: ~/.bolt
+      description: "Bolt 全局配置与模板缓存"
+      default_selected: false
+    - path: ~/.bolt-diy
+      description: "Bolt.diy 本地部署目录及配置"
+      default_selected: false
+  data_and_history:
+    - path: ~/.bolt/workspaces
+      description: "生成的项目草稿与容器工作区快照"
+      default_selected: true
+    - path: ~/.bolt/history
+      description: "历史对话与提示词记录"
+      default_selected: true
+    - path: ~/Library/Application Support/bolt
+      description: "桌面或本地应用数据"
+      default_selected: true
+  caches:
+    - path: ~/.bolt/cache
+      description: "依赖与构建产物临时缓存"
+      default_selected: true
+
+safety:
+  protect_git_repos: true
+  exclude_paths:
+    - ~/Documents
+    - ~/Desktop
+    - ~/Projects

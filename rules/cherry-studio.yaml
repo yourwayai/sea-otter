@@ -1,0 +1,49 @@
+id: cherry-studio
+name: Cherry Studio
+category: desktop-agent
+vendor: KangTool
+homepage: https://cherry-ai.com
+detection:
+  app_bundle_id:
+    - com.kangfenfei.cherry-studio
+  app_paths:
+    - /Applications/Cherry Studio.app
+
+targets:
+  credentials:
+    - path: ~/.cherrystudio/config.json
+      description: "多服务商 API Key 配置 (包含 OpenAI / Claude / DeepSeek 密钥)"
+      default_selected: true
+      contains_secrets: true
+  configs:
+    - path: ~/.cherrystudio
+      description: "助手预设、Prompt 提示词模板与主配置"
+      default_selected: false
+  data_and_history:
+    - path: ~/Library/Application Support/Cherry Studio
+      description: "完整本地聊天记录、数据库与工作区存储"
+      default_selected: true
+    - path: ~/Library/Saved Application State/com.kangfenfei.cherry-studio.savedState
+      description: "应用窗口恢复状态"
+      default_selected: true
+  caches:
+    - path: ~/Library/Caches/com.kangfenfei.cherry-studio
+      description: "系统级缓存"
+      default_selected: true
+    - path: ~/Library/Application Support/Cherry Studio/Cache
+      description: "客户端网络与图片缓存"
+      default_selected: true
+  preferences:
+    - path: ~/Library/Preferences/com.kangfenfei.cherry-studio.plist
+      description: "偏好设置"
+      default_selected: true
+    - path: ~/Library/Preferences/ByHost/com.kangfenfei.cherry-studio.ShipIt.*.plist
+      description: "更新配置"
+      default_selected: true
+
+safety:
+  protect_git_repos: true
+  exclude_paths:
+    - ~/Documents
+    - ~/Desktop
+    - ~/Projects

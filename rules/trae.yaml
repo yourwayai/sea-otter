@@ -1,0 +1,75 @@
+id: trae
+name: Trae AI IDE
+category: ide
+vendor: ByteDance
+homepage: https://www.trae.ai
+detection:
+  app_bundle_id:
+    - com.trae.app
+    - com.byte.trae
+  app_paths:
+    - /Applications/Trae.app
+  cli_binaries:
+    - /usr/local/bin/trae
+    - ~/.local/bin/trae
+
+targets:
+  binaries_and_scripts:
+    - path: /usr/local/bin/trae
+      description: "Trae CLI 入口脚本"
+      default_selected: true
+    - path: ~/.local/bin/trae
+      description: "用户级 Trae CLI 入口"
+      default_selected: true
+  credentials:
+    - path: ~/Library/Application Support/Trae/User/globalStorage/storage.json
+      description: "用户会话与登录凭证"
+      default_selected: true
+      contains_secrets: true
+  configs:
+    - path: ~/.trae
+      description: "Trae 插件与配置目录"
+      default_selected: false
+    - path: ~/.trae-aicc
+      description: "字节跳动 AI 代码补全服务与模型运行时配置"
+      default_selected: false
+    - path: ~/Library/Application Support/Trae/User/settings.json
+      description: "个人设置文件"
+      default_selected: false
+  data_and_history:
+    - path: ~/Library/Application Support/Trae
+      description: "Trae 核心工作区、扩展与历史数据库"
+      default_selected: true
+    - path: ~/.trae-aicc/.code_contribution
+      description: "AI 代码贡献度历史记录"
+      default_selected: true
+    - path: ~/Library/Saved Application State/com.trae.app.savedState
+      description: "应用窗口状态"
+      default_selected: true
+  caches:
+    - path: ~/Library/Caches/com.trae.app
+      description: "系统级缓存"
+      default_selected: true
+    - path: ~/Library/Application Support/Trae/Cache
+      description: "应用运行时缓存"
+      default_selected: true
+    - path: ~/Library/Application Support/Trae/Code Cache
+      description: "V8 编译字节码缓存"
+      default_selected: true
+    - path: ~/Library/HTTPStorages/com.trae.app
+      description: "网络传输缓存"
+      default_selected: true
+  preferences:
+    - path: ~/Library/Preferences/com.trae.app.plist
+      description: "应用全局偏好设置"
+      default_selected: true
+    - path: ~/Library/Preferences/ByHost/com.trae.app.ShipIt.*.plist
+      description: "更新组件偏好"
+      default_selected: true
+
+safety:
+  protect_git_repos: true
+  exclude_paths:
+    - ~/Documents
+    - ~/Desktop
+    - ~/Projects

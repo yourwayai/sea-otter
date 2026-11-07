@@ -23,11 +23,17 @@ sea-otter/
 │   └── rule.schema.json         # 规则库 JSON Schema 规范 (v1.0)
 ├── rules/                       # 各大 AI/开发者工具精细化指纹规则 (YAML)
 │   ├── alma.yaml                # Alma AI Agent
-│   ├── workbuddy.yaml           # WorkBuddy AI
-│   ├── kiro.yaml                # Kiro IDE
-│   ├── gemini-antigravity.yaml  # Google Antigravity & Gemini CLI
+│   ├── bolt.yaml                # Bolt (bolt.new / Bolt.diy)
+│   ├── cherry-studio.yaml       # Cherry Studio (多模型客户端)
 │   ├── claude-code.yaml         # Anthropic Claude Code CLI
-│   └── codex.yaml               # OpenAI Codex CLI
+│   ├── codex.yaml               # OpenAI Codex CLI
+│   ├── cursor.yaml              # Cursor (AI IDE)
+│   ├── gemini-antigravity.yaml  # Google Antigravity & Gemini CLI
+│   ├── kiro.yaml                # Kiro IDE
+│   ├── ollama.yaml              # Ollama 本地模型运行时
+│   ├── trae.yaml                # ByteDance Trae AI IDE
+│   ├── windsurf.yaml            # Codeium Windsurf Editor
+│   └── workbuddy.yaml           # WorkBuddy AI
 ├── docs/
 │   └── rule-schema.md           # 架构设计规范与数据协议文档
 ├── .gitignore

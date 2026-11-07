@@ -1,0 +1,82 @@
+id: windsurf
+name: Windsurf Editor
+category: ide
+vendor: Codeium
+homepage: https://codeium.com/windsurf
+detection:
+  app_bundle_id:
+    - com.exafunction.windsurf
+  app_paths:
+    - /Applications/Windsurf.app
+  cli_binaries:
+    - /usr/local/bin/windsurf
+    - ~/.local/bin/windsurf
+
+targets:
+  binaries_and_scripts:
+    - path: /usr/local/bin/windsurf
+      description: "Windsurf CLI 入口脚本"
+      default_selected: true
+    - path: ~/.local/bin/windsurf
+      description: "用户级 Windsurf CLI 入口"
+      default_selected: true
+  credentials:
+    - path: ~/.codeium/windsurf/credentials.json
+      description: "Codeium 账户认证与 Token"
+      default_selected: true
+      contains_secrets: true
+    - path: ~/.codeium/database.sqlite
+      description: "用户索引与登录持久化凭据"
+      default_selected: true
+      contains_secrets: true
+    - path: ~/Library/Application Support/Windsurf/User/globalStorage/storage.json
+      description: "全局用户存储与状态 Token"
+      default_selected: true
+      contains_secrets: true
+  configs:
+    - path: ~/.windsurf
+      description: "Windsurf 插件与个性化配置"
+      default_selected: false
+    - path: ~/.codeium/windsurf
+      description: "Windsurf 专有模型与配置目录"
+      default_selected: false
+    - path: ~/Library/Application Support/Windsurf/User/settings.json
+      description: "编辑器个性化设置"
+      default_selected: false
+  data_and_history:
+    - path: ~/.codeium
+      description: "Codeium 核心运行时、语言服务器与历史记录"
+      default_selected: true
+    - path: ~/Library/Application Support/Windsurf
+      description: "Windsurf 完整工作区与历史数据"
+      default_selected: true
+    - path: ~/Library/Saved Application State/com.exafunction.windsurf.savedState
+      description: "应用窗口状态"
+      default_selected: true
+  caches:
+    - path: ~/Library/Caches/com.exafunction.windsurf
+      description: "系统级缓存目录"
+      default_selected: true
+    - path: ~/Library/HTTPStorages/com.exafunction.windsurf
+      description: "网络传输缓存"
+      default_selected: true
+    - path: ~/Library/Application Support/Windsurf/Cache
+      description: "应用内部缓存"
+      default_selected: true
+    - path: ~/Library/Application Support/Windsurf/Code Cache
+      description: "代码解析与编译缓存"
+      default_selected: true
+  preferences:
+    - path: ~/Library/Preferences/com.exafunction.windsurf.plist
+      description: "应用偏好设置"
+      default_selected: true
+    - path: ~/Library/Preferences/ByHost/com.exafunction.windsurf.ShipIt.*.plist
+      description: "自动更新组件偏好"
+      default_selected: true
+
+safety:
+  protect_git_repos: true
+  exclude_paths:
+    - ~/Documents
+    - ~/Desktop
+    - ~/Projects
