@@ -10,8 +10,9 @@ from typing import List, Optional
 
 from sea_otter.scanner import RuleScanner, ToolScanReport, TargetMatch
 from sea_otter.cleaner import SafeCleaner
+from sea_otter.safety import RiskLevel
 from sea_otter.ui import (
-    c, Color, format_size, print_banner, get_status_badge, CATEGORY_NAMES
+    c, Color, format_size, print_banner, get_status_badge, get_risk_badge, CATEGORY_NAMES
 )
 
 def cmd_scan(args, scanner: RuleScanner):
@@ -47,6 +48,8 @@ def cmd_scan(args, scanner: RuleScanner):
                         "size_bytes": t.size_bytes,
                         "contains_secrets": t.contains_secrets,
                         "is_model_weight": t.is_model_weight,
+                        "risk_level": t.risk_level,
+                        "default_selected": t.default_selected,
                         "is_safe": t.is_safe,
                         "safety_reason": t.safety_reason
                     }
@@ -65,6 +68,12 @@ def cmd_scan(args, scanner: RuleScanner):
     total_bytes = sum(r.total_size_bytes for r in reports)
     total_secrets = sum(r.secret_count for r in reports)
     total_model_bytes = sum(r.model_weight_size_bytes for r in reports)
+
+    # 四级安全防护矩阵统计
+    total_l1_bytes = sum(sum(t.size_bytes for t in r.l1_targets) for r in reports)
+    total_l2_bytes = sum(sum(t.size_bytes for t in r.l2_targets) for r in reports)
+    total_l3_bytes = sum(sum(t.size_bytes for t in r.l3_targets) for r in reports)
+    total_l4_count = sum(len(r.l4_targets) for r in reports)
 
     visible_reports = [r for r in reports if r.has_residuals or args.show_all]
 
@@ -92,11 +101,12 @@ def cmd_scan(args, scanner: RuleScanner):
             print(f"   {c('发现占用:', Color.DIM)} {c(size_str, Color.BOLD, Color.BRIGHT_YELLOW)} (共 {len(r.targets)} 处目标)")
             for t in r.targets:
                 cat_desc = CATEGORY_NAMES.get(t.category, t.category)
+                risk_badge = get_risk_badge(t.risk_level)
                 secret_badge = c(" 🔑[敏感凭证]", Color.BOLD, Color.RED) if t.contains_secrets else ""
                 model_badge = c(" 🧠[本地模型权重]", Color.BOLD, Color.BRIGHT_CYAN) if t.is_model_weight else ""
                 safety_badge = "" if t.is_safe else c(f" ⚠️[{t.safety_reason}]", Color.BOLD, Color.BRIGHT_RED)
                 
-                print(f"     • [{c(cat_desc, Color.MAGENTA)}] {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_badge}{model_badge}{safety_badge}")
+                print(f"     • [{c(cat_desc, Color.MAGENTA)}] {risk_badge} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_badge}{model_badge}{safety_badge}")
                 if t.description:
                     print(f"       {c('↳ ' + t.description, Color.DIM)}")
         else:
@@ -120,6 +130,15 @@ def cmd_scan(args, scanner: RuleScanner):
         print(f" • 本地模型: {c(format_size(total_model_bytes), Color.BOLD, Color.BRIGHT_CYAN)} (包含 LLM / 向量嵌入模型)")
     if total_secrets > 0:
         print(f" • 敏感凭证: {c(str(total_secrets) + ' 处包含私钥/OAuth Token', Color.BOLD, Color.RED)}")
+    print(c(" • 安全矩阵分级汇总:", Color.DIM))
+    print(f"   ├─ {c('🟢 L1 极低风险', Color.BOLD, Color.BRIGHT_GREEN)}: {format_size(total_l1_bytes)} (空锁/Bug/散落，默认勾选归档)")
+    print(f"   ├─ {c('🟡 L2 明确已卸载', Color.BOLD, Color.YELLOW)}: {format_size(total_l2_bytes)} (孤儿残留，默认勾选隔离)")
+    if total_l3_bytes > 0:
+        print(f"   ├─ {c('🟠 L3 在用减负', Color.BOLD, Color.BRIGHT_YELLOW)}: {format_size(total_l3_bytes)} (在用软件/模型，默认不勾选需确认)")
+    if total_l4_count > 0:
+        print(f"   └─ {c('🔴 L4 绝对红线', Color.BOLD, Color.BRIGHT_RED)}: {total_l4_count} 处受保护目标 (系统红线/活跃进程，硬编码阻断)")
+    else:
+        print(f"   └─ {c('🔴 L4 绝对红线', Color.BOLD, Color.BRIGHT_RED)}: 0 处违规 (系统关键数据安全)")
     print(c("═" * 68, Color.DIM))
     print(f"{c('💡 提示:', Color.DIM)} 执行 {c('sea-otter clean --dry-run', Color.CYAN)} 可预览清理计划；默认所有被清理文件将移入系统废纸篓，安全可恢复。")
 
@@ -134,39 +153,61 @@ def cmd_clean(args, scanner: RuleScanner):
     if args.category:
         categories_filter = [c.strip() for c in args.category.split(",") if c.strip()]
 
+    include_l3 = getattr(args, "include_l3", False)
+
     # 筛选待清理目标
     candidates: List[TargetMatch] = []
     skipped_secrets_count = 0
     skipped_unsafe_count = 0
+    skipped_l3_count = 0
+    skipped_l3_bytes = 0
 
     for r in reports:
         for t in r.targets:
             if categories_filter and t.category not in categories_filter:
                 continue
-            if not t.is_safe:
+
+            # 1. 绝对系统红线或被安全防线拦截的目标，绝对阻断 (L4: Protected System)
+            if t.risk_level == RiskLevel.L4_DANGER.value or not t.is_safe:
                 skipped_unsafe_count += 1
                 continue
+
+            # 2. L3 (在用软件减负) 默认不勾选，需用户显式指定 --include-l3
+            if t.risk_level == RiskLevel.L3_IN_USE.value and not include_l3:
+                skipped_l3_count += 1
+                skipped_l3_bytes += t.size_bytes
+                continue
+
+            # 3. 敏感凭据过滤
             if t.contains_secrets and not args.include_secrets:
                 skipped_secrets_count += 1
                 continue
+
             candidates.append(t)
 
     if not candidates:
         print(c("✨ 没有可清理的目标项！", Color.GREEN))
+        if skipped_l3_count > 0:
+            print(f"ℹ️ 检测到 {c(str(skipped_l3_count), Color.BOLD)} 处 L3 在用软件减负目标 (共 {c(format_size(skipped_l3_bytes), Color.YELLOW)})，默认已受保护未勾选。")
+            print(f"   如需深度清理正在使用的软件模型权重或缓存，请带上 {c('--include-l3', Color.CYAN)} 参数。")
         if skipped_secrets_count > 0:
             print(f"ℹ️ 检测到 {skipped_secrets_count} 处敏感凭证，默认已被跳过（如需清理请带上 {c('--include-secrets', Color.YELLOW)}）。")
         return
 
     candidate_size = sum(t.size_bytes for t in candidates)
 
-    print(c("🎯 待清理目标清单:", Color.BOLD, Color.BRIGHT_WHITE))
+    print(c("🎯 待清理目标清单 (已通过四级安全防护矩阵仲裁):", Color.BOLD, Color.BRIGHT_WHITE))
     for t in candidates:
         secret_mark = c(" 🔑[敏感凭证]", Color.RED) if t.contains_secrets else ""
-        print(f"  [{c(CATEGORY_NAMES.get(t.category, t.category), Color.MAGENTA)}] {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_mark}")
+        risk_mark = get_risk_badge(t.risk_level)
+        print(f"  [{c(CATEGORY_NAMES.get(t.category, t.category), Color.MAGENTA)}] {risk_mark} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_mark}")
         print(f"    {c(t.description, Color.DIM)}")
 
     print()
     print(f"预计释放空间: {c(format_size(candidate_size), Color.BOLD, Color.BRIGHT_GREEN)} (共 {len(candidates)} 项)")
+    if skipped_l3_count > 0:
+        print(c(f"ℹ️ 另有 {skipped_l3_count} 处 L3 在用减负项 ({format_size(skipped_l3_bytes)}) 默认未勾选保护 (加 --include-l3 可纳入)", Color.DIM))
+
 
     if args.dry_run:
         print()
@@ -385,8 +426,10 @@ def main():
     p_clean.add_argument("tools", nargs="*", help="指定要清理的工具 ID (可选)")
     p_clean.add_argument("-c", "--category", help="按分类过滤 (如 caches,data_and_history)")
     p_clean.add_argument("-n", "--dry-run", action="store_true", help="只读模式，仅预览待清理目标与空间，不进行实际移动")
+    p_clean.add_argument("--include-l3", action="store_true", help="允许清理 L3 在用软件减负项 (如正在使用的端侧大模型、本地缓存)，默认安全跳过保护")
     p_clean.add_argument("--include-secrets", action="store_true", help="允许清理敏感凭证 (如 Token/API 密钥)，默认安全跳过")
     p_clean.add_argument("-y", "--yes", action="store_true", help="无需交互确认，直接移入废纸篓")
+
 
     # rules
     p_rules = subparsers.add_parser("rules", help="查看或校验内置规则库")

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import List, Tuple, Optional
 
 from sea_otter.scanner import TargetMatch
-from sea_otter.safety import validate_target_safety
+from sea_otter.safety import validate_target_safety, RiskLevel
 
 @dataclass
 class CleanActionResult:
@@ -69,6 +69,17 @@ class SafeCleaner:
     def clean_target(self, target: TargetMatch, dry_run: bool = False, force_secret: bool = False) -> CleanActionResult:
         """执行单个目标的清理"""
         path = target.resolved_path
+
+        # 0. L4 绝对系统红线硬编码绝对阻断
+        if target.risk_level == RiskLevel.L4_DANGER.value or not target.is_safe:
+            return CleanActionResult(
+                target=target,
+                success=False,
+                size_freed=0,
+                is_dry_run=dry_run,
+                method_used="blocked",
+                message=f"触发 L4 绝对系统红线硬编码阻断: {target.safety_reason}"
+            )
 
         # 1. 安全合规再次拦截校验
         is_safe, reason = validate_target_safety(path)

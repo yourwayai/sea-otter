@@ -46,6 +46,22 @@ class TestSafetyGuard(unittest.TestCase):
             is_safe, reason = validate_target_safety(user_path)
             self.assertFalse(is_safe, f"用户主目录 {user_path} 应被严格拦截")
 
+    def test_system_redline_vault_protection(self):
+        """测试系统红线库 (System Redline Vault) 硬阻断"""
+        home = os.path.expanduser("~")
+        redline_cases = [
+            os.path.join(home, "Library/Application Support/com.apple.TCC"),
+            os.path.join(home, "Library/Application Support/com.apple.TCC/TCC.db"),
+            os.path.join(home, "Library/Application Support/AddressBook"),
+            os.path.join(home, "Library/Application Support/CallHistoryDB"),
+            os.path.join(home, "Library/Application Support/CloudDocs"),
+            os.path.join(home, "Library/Application Support/com.apple.sharedfilelist"),
+        ]
+        for rp in redline_cases:
+            is_safe, reason = validate_target_safety(rp)
+            self.assertFalse(is_safe, f"系统红线路径 {rp} 应被硬编码阻断")
+            self.assertIn("系统红线", reason)
+
     def test_git_workspace_protection(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             # 创建模拟 git 项目 (使用嵌套目录避免直接命中 Linux 下 /tmp/xxx 的层级过浅保护)
@@ -69,6 +85,65 @@ class TestSafetyGuard(unittest.TestCase):
         is_safe, reason = validate_target_safety(test_path, rule_safety=rule_safety)
         self.assertFalse(is_safe)
         self.assertIn("严格排除路径", reason)
+
+
+class TestRiskMatrix(unittest.TestCase):
+    """测试四级安全防护矩阵 (L1 ~ L4) 判定逻辑"""
+
+    def test_l1_zero_impact_junk(self):
+        from sea_otter.safety import assess_risk_level, RiskLevel
+        home = os.path.expanduser("~")
+        # Bug 幽灵目录、散落锁文件等
+        null_dir = os.path.join(home, "Library/Application Support/(null)")
+        lvl, is_safe, reason = assess_risk_level(null_dir, software_status="orphaned")
+        self.assertEqual(lvl, RiskLevel.L1_SAFE)
+        self.assertTrue(is_safe)
+        self.assertIn("极低风险", reason)
+
+        lock_file = os.path.join(home, "Library/Application Support/.ACCC_Lock")
+        lvl2, is_safe2, _ = assess_risk_level(lock_file, software_status="orphaned")
+        self.assertEqual(lvl2, RiskLevel.L1_SAFE)
+        self.assertTrue(is_safe2)
+
+    def test_l2_orphaned_apps(self):
+        from sea_otter.safety import assess_risk_level, RiskLevel
+        home = os.path.expanduser("~")
+        orphan_dir = os.path.join(home, "Library/Application Support/UninstalledApp")
+        lvl, is_safe, reason = assess_risk_level(orphan_dir, software_status="orphaned")
+        self.assertEqual(lvl, RiskLevel.L2_ORPHAN)
+        self.assertTrue(is_safe)
+        self.assertIn("明确已卸载", reason)
+
+    def test_l3_in_use_bloatware(self):
+        from sea_otter.safety import assess_risk_level, RiskLevel
+        home = os.path.expanduser("~")
+        active_cache = os.path.join(home, "Library/Caches/com.google.Chrome")
+        lvl, is_safe, reason = assess_risk_level(active_cache, software_status="installed")
+        self.assertEqual(lvl, RiskLevel.L3_IN_USE)
+        self.assertTrue(is_safe)
+        self.assertIn("在用软件减负", reason)
+
+        # 本地模型权重
+        model_dir = os.path.join(home, ".ollama/models")
+        lvl2, is_safe2, _ = assess_risk_level(model_dir, software_status="installed", is_model_weight=True)
+        self.assertEqual(lvl2, RiskLevel.L3_IN_USE)
+
+    def test_l4_protected_system_and_running(self):
+        from sea_otter.safety import assess_risk_level, RiskLevel
+        home = os.path.expanduser("~")
+        
+        # 1. 系统红线服务 -> L4
+        tcc_path = os.path.join(home, "Library/Application Support/com.apple.TCC")
+        lvl, is_safe, _ = assess_risk_level(tcc_path, software_status="orphaned")
+        self.assertEqual(lvl, RiskLevel.L4_DANGER)
+        self.assertFalse(is_safe)
+
+        # 2. 软件运行中 -> L4
+        running_path = os.path.join(home, "Library/Application Support/RunningApp")
+        lvl2, is_safe2, _ = assess_risk_level(running_path, software_status="running")
+        self.assertEqual(lvl2, RiskLevel.L4_DANGER)
+        self.assertFalse(is_safe2)
+
 
 
 class TestSafeCleaner(unittest.TestCase):
@@ -157,6 +232,29 @@ class TestSafeCleaner(unittest.TestCase):
             if os.path.exists(home_test_file):
                 os.remove(home_test_file)
 
+    def test_l4_target_strictly_blocked(self):
+        """测试 L4 绝对系统红线被 cleaner 强制拦截"""
+        home = os.path.expanduser("~")
+        tcc_path = os.path.join(home, "Library/Application Support/com.apple.TCC")
+        target = TargetMatch(
+            category="preferences",
+            raw_path=tcc_path,
+            resolved_path=tcc_path,
+            description="TCC 权限库",
+            size_bytes=1024,
+            file_count=1,
+            contains_secrets=False,
+            is_model_weight=False,
+            default_selected=False,
+            is_safe=False,
+            safety_reason="触发系统红线硬白名单保护",
+            risk_level="L4_DANGER"
+        )
+        res = self.cleaner.clean_target(target, dry_run=False)
+        self.assertFalse(res.success)
+        self.assertEqual(res.method_used, "blocked")
+        self.assertIn("L4 绝对系统红线", res.message)
+
 
 class TestCLIExecution(unittest.TestCase):
     def test_cli_rules_list(self):
@@ -175,6 +273,11 @@ class TestCLIExecution(unittest.TestCase):
         data = json.loads(proc.stdout)
         self.assertIsInstance(data, list)
         self.assertGreaterEqual(len(data), 12)
+        # 校验返回数据中的 targets 包含 risk_level 字段且符合 L1~L4 规范
+        for tool in data:
+            for t in tool.get("targets", []):
+                self.assertIn("risk_level", t)
+                self.assertIn(t["risk_level"], ["L1_SAFE", "L2_ORPHAN", "L3_IN_USE", "L4_DANGER"])
 
     def test_cli_clean_dry_run(self):
         proc = subprocess.run(["sea-otter", "clean", "--dry-run"], capture_output=True, text=True)
@@ -184,3 +287,4 @@ class TestCLIExecution(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

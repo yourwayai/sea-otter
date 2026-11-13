@@ -111,3 +111,16 @@ def get_status_badge(status: str) -> str:
     elif status == "clean":
         return c("⚪️ 环境整洁 (Clean)", Color.DIM)
     return c(status, Color.WHITE)
+
+def get_risk_badge(risk_level: str) -> str:
+    """获取四级安全风险徽标 (Four-Tier Safety Risk Matrix Badge)"""
+    if risk_level == "L1_SAFE":
+        return c("[L1 极低风险]", Color.BOLD, Color.BRIGHT_GREEN)
+    elif risk_level == "L2_ORPHAN":
+        return c("[L2 明确已卸载]", Color.BOLD, Color.YELLOW)
+    elif risk_level == "L3_IN_USE":
+        return c("[L3 在用减负·需确认]", Color.BOLD, Color.BRIGHT_YELLOW)
+    elif risk_level == "L4_DANGER":
+        return c("[L4 绝对红线·硬阻断]", Color.BOLD, Color.BRIGHT_RED)
+    return c(f"[{risk_level}]", Color.DIM)
+

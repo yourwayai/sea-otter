@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any
 import yaml
 
-from sea_otter.safety import normalize_path, validate_target_safety
+from sea_otter.safety import normalize_path, validate_target_safety, assess_risk_level, RiskLevel
 
 @dataclass
 class TargetMatch:
@@ -25,6 +25,7 @@ class TargetMatch:
     default_selected: bool
     is_safe: bool
     safety_reason: str
+    risk_level: str = RiskLevel.L2_ORPHAN.value
 
 @dataclass
 class ToolScanReport:
@@ -53,6 +54,23 @@ class ToolScanReport:
     @property
     def is_running(self) -> bool:
         return self.status == "running"
+
+    @property
+    def l1_targets(self) -> List[TargetMatch]:
+        return [t for t in self.targets if t.risk_level == RiskLevel.L1_SAFE.value]
+
+    @property
+    def l2_targets(self) -> List[TargetMatch]:
+        return [t for t in self.targets if t.risk_level == RiskLevel.L2_ORPHAN.value]
+
+    @property
+    def l3_targets(self) -> List[TargetMatch]:
+        return [t for t in self.targets if t.risk_level == RiskLevel.L3_IN_USE.value]
+
+    @property
+    def l4_targets(self) -> List[TargetMatch]:
+        return [t for t in self.targets if t.risk_level == RiskLevel.L4_DANGER.value]
+
 
 class RuleScanner:
     def __init__(self, rules_dir: Optional[str] = None):
@@ -218,6 +236,7 @@ class RuleScanner:
 
         # 2. 安装状态检测
         is_installed, det_matches = self.detect_software_installed(rule)
+        preliminary_status = "running" if is_running else ("installed" if is_installed else "orphaned")
         
         targets: List[TargetMatch] = []
         total_size = 0
@@ -244,14 +263,35 @@ class RuleScanner:
                         continue
                     
                     size, count = self._get_path_size_and_count(p)
-                    is_safe, reason = validate_target_safety(p, safety_config)
                     is_model = item.get("is_model_weight", False) or cat_name == "ai_models"
+                    has_secret = item.get("contains_secrets", False)
+                    declared_level = item.get("risk_level")
 
-                    # 如果正在运行中，强制阻断清理建议
-                    if is_running:
+                    # 四级安全矩阵评估
+                    risk_lvl, is_safe, reason = assess_risk_level(
+                        target_path=p,
+                        software_status=preliminary_status,
+                        rule_safety=safety_config,
+                        is_model_weight=is_model,
+                        contains_secrets=has_secret,
+                        category=cat_name,
+                        declared_risk_level=declared_level
+                    )
+
+                    # 默认勾选逻辑:
+                    # L1 (极低风险): 默认勾选归档
+                    # L2 (明确已卸载): 默认勾选隔离
+                    # L3 (在用软件减负): 默认不勾选，需用户确认
+                    # L4 (绝对系统红线): 硬编码阻断，不可勾选
+                    if risk_lvl == RiskLevel.L4_DANGER:
+                        default_selected = False
                         is_safe = False
-                        proc_hint = active_processes[0] if active_processes else (active_locks[0] if active_locks else "活跃中")
-                        reason = f"软件正在运行中 ({proc_hint})，安全防线强制锁定保护"
+                    elif risk_lvl == RiskLevel.L3_IN_USE:
+                        default_selected = False
+                    elif risk_lvl in [RiskLevel.L1_SAFE, RiskLevel.L2_ORPHAN]:
+                        default_selected = item.get("default_selected", True)
+                    else:
+                        default_selected = False
 
                     t_match = TargetMatch(
                         category=cat_name,
@@ -260,11 +300,12 @@ class RuleScanner:
                         description=item.get("description", ""),
                         size_bytes=size,
                         file_count=count,
-                        contains_secrets=item.get("contains_secrets", False),
+                        contains_secrets=has_secret,
                         is_model_weight=is_model,
-                        default_selected=False if is_running else item.get("default_selected", True),
+                        default_selected=default_selected,
                         is_safe=is_safe,
-                        safety_reason=reason
+                        safety_reason=reason,
+                        risk_level=risk_lvl.value if isinstance(risk_lvl, RiskLevel) else str(risk_lvl)
                     )
                     targets.append(t_match)
 
