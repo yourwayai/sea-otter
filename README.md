@@ -27,6 +27,30 @@
 
 ---
 
+## 🛡️ 核心防线：四级安全防护矩阵 (Four-Tier Safety Risk Matrix)
+
+面向现代开发者与 AI 软件的磁盘治理，**安全性高于一切**。Sea-Otter 弃用传统的二元判定，正式落地四级安全防护矩阵：
+
+| 级别 | 定义 | 典型对象 | 处理与勾选策略 |
+| :--- | :--- | :--- | :--- |
+| **🟢 L1: 极低风险 (Zero-Impact Junk)** | 纯垃圾文件、空锁、跨平台 Bug 目录 | 历史散落图片、`.ACCC_Lock`、`(null)` 幽灵目录、空骨架目录 | **默认勾选**，一键归档移入废纸篓 |
+| **🟡 L2: 明确已卸载 (Orphaned Apps)** | 对应软件已删除，残留孤儿历史配置 | `Codex`、`Cursor`、`Claude`、`Trae` 等已卸载孤岛 | **默认勾选**，移入废纸篓隔离区 |
+| **🟠 L3: 在用软件减负 (Bloatware/Cache)** | 正在使用的软件，但内部堆积了模型/临时缓存/凭据 | 正在使用的软件缓存、本地模型权重（Ollama/BGE）、OAuth 密钥 | **默认不勾选**，需加 `--include-l3` 显式确认 |
+| **🔴 L4: 绝对安全红线 (Protected System)** | macOS 系统核心数据、权限库、代码工程、活跃进程 | `com.apple.TCC`、`AddressBook`、`CloudDocs`、`.git` 仓库、运行中的进程 | **硬编码屏蔽阻断**，完全禁止删除 |
+
+### 四大绝对安全铁律
+
+1. **系统红线库 (System Redline Vault) 强阻断**：
+   - 对 `com.apple.TCC` (麦克风/摄像头/完全磁盘访问权限库)、`AddressBook`、`CallHistoryDB`、`CloudDocs`、`Keychain`、`com.apple.sharedfilelist` 等系统关键库设立绝对硬白名单，禁止任何触碰。
+2. **多维存活状态交叉验证 (Process & Lock Guard)**：
+   - 判定软件是否在用绝不仅看 `/Applications/*.app`，而是交叉比对进程表（`pgrep`）、常驻守护进程与单例文件锁（`SingletonLock`）。活跃工具自动上锁标记为 **`🔵 正在运行 (保护锁定)`**。
+3. **代码仓库与工程资产“强制免疫”**：
+   - 任何待清理路径自动浅层递归探测 `.git`、`.svn`、`.hg`、`.obsidian` 标识。只要检测到代码仓库，**强制阻断一键清理，将其归类为用户工程资产**。
+4. **废纸篓软着陆隔离与敏感凭据审计**：
+   - 默认采用系统原生 Trash 移入机制，零误删心理负担；明文 OAuth Token 和私钥自动打上 🔑 告警标并默认跳过。
+
+---
+
 ## 🗂 项目结构
 
 ```text
@@ -34,8 +58,9 @@ sea-otter/
 ├── assets/                      # 项目资源（Logo 图标等）
 │   └── logo.png
 ├── schema/
-│   └── rule.schema.json         # 规则库 JSON Schema 规范 (v1.0)
+│   └── rule.schema.json         # 规则库 JSON Schema 规范 (v1.1)
 ├── rules/                       # 各大 AI/开发者工具精细化指纹规则 (YAML)
+│   ├── 5ire.yaml                # 5ire AI Desktop (BGE-M3 本地向量模型)
 │   ├── alma.yaml                # Alma AI Agent
 │   ├── bolt.yaml                # Bolt (bolt.new / Bolt.diy)
 │   ├── cherry-studio.yaml       # Cherry Studio (多模型客户端)
@@ -43,32 +68,29 @@ sea-otter/
 │   ├── codex.yaml               # OpenAI Codex CLI
 │   ├── cursor.yaml              # Cursor (AI IDE)
 │   ├── gemini-antigravity.yaml  # Google Antigravity & Gemini CLI
+│   ├── hermes.yaml              # Hermes Agent (多进程守护网关)
 │   ├── kiro.yaml                # Kiro IDE
 │   ├── ollama.yaml              # Ollama 本地模型运行时
 │   ├── trae.yaml                # ByteDance Trae AI IDE
 │   ├── windsurf.yaml            # Codeium Windsurf Editor
 │   └── workbuddy.yaml           # WorkBuddy AI
 ├── docs/
+│   ├── architecture-and-lessons-learned.md # 实战经验与架构指南 (v1.2 Milestone)
 │   └── rule-schema.md           # 架构设计规范与数据协议文档
+├── sea_otter/                   # 核心 Python 引擎
+│   ├── safety.py                # 四级安全防护矩阵与系统红线库
+│   ├── scanner.py               # 规则驱动的体检与多维状态识别
+│   ├── cleaner.py               # 安全移入系统废纸篓执行引擎
+│   ├── ui.py                    # 终端视觉与四级色彩徽标
+│   └── cli.py                   # 命令行交互与调度
+├── tests/                       # 单元测试套件 (19 项全覆盖)
+├── pyproject.toml
+├── setup.py
 ├── .gitignore
 └── README.md
 ```
 
 ---
-
-## 📐 规则库规范与设计哲学
-
-每条工具规则遵循四层架构：
-1. **元信息（Metadata）**：工具唯一标识、名称、分类、厂商与主页。
-2. **状态感知检测（Detection）**：检测 Bundle ID、App 路径与 CLI 命令，自动判定 `已安装 (Installed)` 还是 `孤儿残留 (Orphaned Residual)`。
-3. **分级目标分类（Targets）**：
-   - `caches`: 纯缓存（安全随时清理）
-   - `preferences`: 偏好设置与窗口状态
-   - `credentials`: 敏感凭据（OAuth Token、密钥，标记 `contains_secrets: true`）
-   - `data_and_history`: 会话历史数据库与向量记忆
-   - `configs`: 配置文件与插件 Skills（默认不勾选，防误删）
-   - `binaries_and_scripts`: CLI 软链接与入口脚本
-4. **安全防线（Safety Guard）**：强制 `.git` 仓库保护与核心用户主目录防伤拦截。
 
 ## 📦 安装与配置 (Installation)
 
@@ -97,8 +119,8 @@ pipx install git+https://github.com/yourwayai/sea-otter.git
 git clone https://github.com/yourwayai/sea-otter.git
 cd sea-otter
 
-# 2. 安装并注册全局命令
-pip install --user .
+# 2. 安装可编辑开发版本
+pip install --user -e .
 
 # 3. 挂载到本地 PATH (可选，便于在任意目录执行)
 ln -sf $(python3 -m site --user-base)/bin/sea-otter ~/.local/bin/sea-otter
@@ -120,62 +142,69 @@ cd sea-otter
 
 ## 💻 CLI 使用指南
 
-无需复杂的配置，直接在终端执行即可：
-
 ### 1. 扫描与体检 (`scan`)
+输出带有四级安全风险色彩徽标、软件存活状态及空间汇总报告：
+
 ```bash
-# 默认扫描所有规则，并输出占用空间与软件状态报告
-./sea-otter scan
+# 默认扫描所有规则，并输出空间占用与四级安全矩阵汇总
+sea-otter scan
 
 # 仅扫描指定的一个或多个工具
-./sea-otter scan cursor codex claude-code
+sea-otter scan cursor codex claude-code
 
 # 显示所有工具（包含未安装且整洁无残留的项）
-./sea-otter scan --all
+sea-otter scan --all
 
-# 以 JSON 格式输出（供 Raycast 插件或第三方脚本调用）
-./sea-otter scan --json
+# 以 JSON 格式输出（带 risk_level，供 Raycast 插件或第三方脚本调用）
+sea-otter scan --json
 ```
 
 ### 2. 安全清理 (`clean`)
-默认所有被删除的目标都将**安全移入 macOS 废纸篓（Trash）**，用户随时可以“放回原处”，杜绝误删风险：
+默认仅清理通过安全仲裁的 **L1（极低风险）** 与 **L2（明确已卸载）** 孤儿残留，所有被清理项安全移入 macOS 废纸篓：
 
 ```bash
-# Dry-run 模拟预览（只读，不修改任何文件系统）
-./sea-otter clean --dry-run
-./sea-otter clean cursor --dry-run
+# Dry-run 模拟预览（只读模式，不修改任何文件系统）
+sea-otter clean --dry-run
+sea-otter clean cursor --dry-run
 
-# 仅清理纯缓存（Cache）
-./sea-otter clean --category caches --dry-run
+# 仅清理纯缓存（Cache）分类
+sea-otter clean --category caches --dry-run
+
+# 纳入 L3 在用软件减负项（如正在使用的软件本地模型权重、日志缓存）
+sea-otter clean --include-l3 --dry-run
 
 # 包含敏感凭据一起清理（默认会保护跳过 Token/密钥）
-./sea-otter clean cursor --include-secrets
+sea-otter clean --include-secrets
 
 # 免交互确认直接清理
-./sea-otter clean cursor -y
+sea-otter clean cursor -y
 ```
 
 ### 3. 规则库查看与校验 (`rules`)
 ```bash
 # 查看内置收录的工具规则列表
-./sea-otter rules list
+sea-otter rules list
 
 # 校验所有规则的 YAML 规范与字段完整性
-./sea-otter rules validate
+sea-otter rules validate
 ```
 
 ---
 
 ## 🚀 规划路线 (Roadmap)
 
-- [x] **Phase 1: 规范定义与首批实测指纹库沉淀** (v1.0 Schema + 12 款主流核心工具)
-- [x] **Phase 2: 本地扫描与空间统计引擎 (MVP Scanner & CLI)**
-  - 支持双态检测 (`已安装` vs `孤儿残留`)
-  - 递归精确计算占用容量（智能嵌套路径去重）
-  - Dry-run 只读预览与终端彩色展示
-  - `.git` 仓库保护与用户关键根目录拦截防线
-  - 移入 macOS 系统废纸篓安全删除机制
-- [ ] **Phase 3: 规则社区生态与多端交付**
-  - Raycast 插件扩展（基于 `--json` 输出快速构建）
-  - Homebrew 自动化打包与发布
-  - 规则在线动态同步更新 (`sea-otter update`)
+- [x] **Phase 1: 规则规范定义与首批核心工具指纹库** (14 款主流核心 AI 工具)
+- [x] **Phase 2: 本地扫描与安全矩阵引擎**
+  - [x] **四级安全防护矩阵 (L1 ~ L4)** 与系统红线库 (`com.apple.TCC` 等)
+  - [x] 进程表与单例锁活跃存活交叉验证（如 Hermes 守护保护）
+  - [x] 代码仓库与工作区资产绝对免疫（`.git`, `.svn`, `.obsidian`）
+  - [x] 智能嵌套去重与 macOS 系统原生废纸篓软着陆隔离
+- [ ] **Phase 3: 现代扫描穿透与端侧模型治理 (v1.2 架构演进)**
+  - [ ] 跨平台 Bug 与根目录散落探测 (`(null)` 幽灵目录、散落锁文件)
+  - [ ] Chrome 4GB 端侧大模型 (`OptGuideOnDeviceModel` / Gemini Nano) 专项裁剪
+  - [ ] 多通道发布孤岛检测（Edge / Chrome Stable vs Canary/Dev 活跃度交叉仲裁）
+  - [ ] 原子隔离归档与一键无损回滚系统 (`sea-otter rollback [session_id]`)
+- [ ] **Phase 4: Agentic 接口与生态交付**
+  - [ ] Antigravity / Claude Code 原生 MCP Server 支持
+  - [ ] Raycast 扩展插件与 Homebrew 分发
+

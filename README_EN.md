@@ -29,26 +29,33 @@ Traditional Mac cleanup apps (such as CleanMyMac, AppCleaner) typically adopt an
 
 ---
 
-## 🛡️ Core Safety Guardrails (Zero False-Positive)
+## 🛡️ Core Safety Guardrails: Four-Tier Safety Risk Matrix
 
-1. **Active Process & Lock Validation (Survival Check)**
-   - Never judges software uninstallation merely by `/Applications/*.app`.
-   - Cross-checks the system process table (`pgrep`), daemon supervisors, and active socket locks (`SingletonLock`).
-   - Running tools are automatically marked **`🔵 Running (Protected)`** and strictly blocked from accidental deletion.
+For modern developers and AI storage governance, **safety precedes everything**. Sea-Otter rejects primitive binary checks and establishes a production-grade Four-Tier Safety Risk Matrix:
 
-2. **Code Workspace & Repository Immunity**
-   - Automatically inspects candidate paths for `.git`, `.svn`, `.hg`, and `.obsidian` markers.
-   - Any path holding developer assets is immediately classified as **Protected Project Assets** and blocked from one-click removal.
+| Tier | Definition | Typical Targets | Selection & Cleanup Strategy |
+| :--- | :--- | :--- | :--- |
+| **🟢 L1: Zero-Impact Junk** | Pure junk files, dead locks, cross-platform bug directories | Stale unpacked icons, `.ACCC_Lock`, `(null)` ghost dir, empty skeletons | **Selected by default**, archived to Trash |
+| **🟡 L2: Orphaned Apps** | Residual configuration from uninstalled applications | Abandoned data from `Codex`, `Cursor`, `Claude`, `Trae`, `Jan` | **Selected by default**, isolated to Trash |
+| **🟠 L3: In-Use Bloatware** | Active applications with bloated weights/caches/tokens | Browser on-device LLMs, local embedding weights, active app caches | **Unselected by default**, requires `--include-l3` confirmation |
+| **🔴 L4: Protected System** | macOS critical databases, code workspaces, active processes | `com.apple.TCC`, `AddressBook`, `CloudDocs`, `.git` repos, running daemons | **Hardcoded block**, strictly forbidden to delete |
 
-3. **Safe Recycle First (Trash by Default)**
-   - Strictly avoids destructive `rm -rf`.
-   - Safely moves candidate files to macOS native **Trash**, allowing instant restoration at any time.
+### Four Absolute Safety Pillars
 
-4. **Secret Leak Auditing**
-   - Flags sensitive OAuth credentials, API tokens, and private keys with a 🔑 warning badge.
-   - Skipped by default during batch cleanup unless explicitly confirmed via `--include-secrets`.
+1. **System Redline Vault (Hardcoded Immunity)**
+   - Hardcoded protection against sensitive macOS system services: `com.apple.TCC` (microphone/camera/full disk access permissions), `AddressBook`, `CallHistoryDB`, `CloudDocs`, `Keychain`, `com.apple.sharedfilelist`.
+2. **Multi-Dimensional Survival Cross-Validation (Process & Lock Guard)**
+   - Never judges application status solely by `/Applications/*.app`.
+   - Cross-references the system process table (`pgrep`), daemon supervisors, and active singleton socket locks (`SingletonLock`). Running software is automatically marked **`🔵 Running (Protected)`** and locked from cleanup.
+3. **Code Workspace & Repository Immunity**
+   - Automatically probes candidate directories for `.git`, `.svn`, `.hg`, and `.obsidian` indicators.
+   - Any path holding developer assets is immediately classified as **Protected Project Assets** and blocked from cleanup.
+4. **Non-Destructive Trash Recycle & Secret Auditing**
+   - Strictly moves items to macOS native **Trash**, providing zero-risk soft landing.
+   - Plaintext OAuth tokens and private keys are flagged with a 🔑 badge and protected by default.
 
 ---
+
 
 ## 🗂 Project Structure
 
@@ -185,6 +192,9 @@ sea-otter clean cursor --dry-run
 # Clean only pure caches across all tools
 sea-otter clean --category caches --dry-run
 
+# Include L3 in-use bloatware (active application models/caches)
+sea-otter clean --include-l3 --dry-run
+
 # Include sensitive credentials (OAuth tokens/keys)
 sea-otter clean cursor --include-secrets
 
@@ -257,17 +267,21 @@ safety:
 
 ## 🗺️ Roadmap
 
-- [x] **Phase 1: Rule Schema Specification & Curated Fingerprints** (Schema v1.1 + 14 core tools)
-- [x] **Phase 2: Local Scan & Safe Cleanup Engine (CLI MVP)**
-  - Dual-state detection (`Installed`, `Orphaned`, `Running (Protected)`)
-  - Intelligent nested directory deduplication
-  - Non-destructive native macOS Trash / Linux Trash support
-  - Git repository & workspace immunity protection
-  - Interactive ASCII console dashboard
-- [ ] **Phase 3: Community & Multi-Platform Distribution**
-  - Raycast Extension integration (powered by `sea-otter scan --json`)
-  - Homebrew Tap distribution (`brew install yourwayai/tap/sea-otter`)
-  - Dynamic rule synchronization (`sea-otter update`)
+- [x] **Phase 1: Rule Schema Specification & Curated Fingerprints** (Schema v1.1 + 14 core AI tools)
+- [x] **Phase 2: Local Scan & Four-Tier Safety Matrix Engine**
+  - [x] **Four-Tier Safety Risk Matrix (L1 ~ L4)** & System Redline Vault (`com.apple.TCC`)
+  - [x] Multi-dimensional active process table & singleton lock validation
+  - [x] Git repository & workspace immunity protection (`.git`, `.svn`, `.obsidian`)
+  - [x] Intelligent nested directory deduplication & native macOS Trash soft landing
+- [ ] **Phase 3: Modern Scanner Penetration & AI Model Governance (v1.2 Architecture)**
+  - [ ] Cross-platform Bug & root orphan scanner (`(null)` ghost dir, `.ACCC_Lock`)
+  - [ ] Chrome 4GB on-device AI model (`OptGuideOnDeviceModel` / Gemini Nano) trimming
+  - [ ] Multi-channel redundancy arbiter (Edge / Chrome Stable vs Canary/Dev cross-check)
+  - [ ] Atomic quarantine archiving & non-destructive rollback (`sea-otter rollback [session_id]`)
+- [ ] **Phase 4: Agentic Ecosystem & Multi-Platform Distribution**
+  - [ ] Native Antigravity / Claude Code MCP Server integration
+  - [ ] Raycast Extension integration & Homebrew distribution
+
 
 ---
 
