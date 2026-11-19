@@ -4,6 +4,7 @@
 """
 
 import os
+import fnmatch
 from typing import Tuple, List, Optional
 
 from enum import Enum
@@ -150,6 +151,8 @@ def validate_target_safety(target_path: str, rule_safety: Optional[dict] = None)
             ex_norm = normalize_path(ex)
             # 如果目标路径与排除路径完全匹配，或者目标路径在排除路径内部，或者目标路径是排除路径的父目录
             if normalized == ex_norm or normalized.startswith(ex_norm + os.sep) or ex_norm.startswith(normalized + os.sep):
+                return False, f"命中了规则中配置的严格排除路径: {ex}"
+            if "*" in ex_norm and fnmatch.fnmatch(normalized, ex_norm):
                 return False, f"命中了规则中配置的严格排除路径: {ex}"
 
     # 6. 代码工程与工作区“强制免疫”（.git / .svn / .obsidian）

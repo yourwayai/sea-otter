@@ -17,7 +17,7 @@
     },
     "category": {
       "type": "string",
-      "enum": ["ide", "cli-agent", "desktop-agent", "runtime", "extension"],
+      "enum": ["ide", "cli-agent", "desktop-agent", "runtime", "extension", "browser"],
       "description": "Category of the developer tool"
     },
     "vendor": {
@@ -160,6 +160,24 @@
           "type": "boolean",
           "default": false,
           "description": "Flags whether this path contains local LLM weights or vector embedding models"
+        },
+        "model_name": {
+          "type": "string",
+          "description": "Name of the local AI model (e.g. Gemini Nano, BGE-M3)"
+        },
+        "model_format": {
+          "type": "string",
+          "description": "Format of the weights (e.g. GGUF, SafeTensors, ONNX, Weights.bin)"
+        },
+        "regenerable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether the host application can automatically re-download or regenerate this model on demand"
+        },
+        "risk_level": {
+          "type": "string",
+          "enum": ["L1_SAFE", "L2_ORPHAN", "L3_IN_USE", "L4_DANGER"],
+          "description": "Explicit risk level override for this target"
         }
       },
       "additionalProperties": false

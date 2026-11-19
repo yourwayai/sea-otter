@@ -5,6 +5,7 @@
 
 import os
 import glob
+import json
 import subprocess
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any
@@ -26,6 +27,231 @@ class TargetMatch:
     is_safe: bool
     safety_reason: str
     risk_level: str = RiskLevel.L2_ORPHAN.value
+    model_name: Optional[str] = None
+    model_format: Optional[str] = None
+
+@dataclass
+class AIModelInspectionResult:
+    is_model_weight: bool = False
+    model_name: Optional[str] = None
+    model_format: Optional[str] = None
+    total_weight_bytes: int = 0
+    model_files_count: int = 0
+    detected_files: List[str] = field(default_factory=list)
+
+class AIModelScanner:
+    """
+    AI-Native 端侧大模型与权重文件专项识别引擎 (AIModelScanner)
+    负责嗅探 .gguf, .safetensors, .onnx, .bin 等大模型权重及端侧模型目录。
+    """
+    # 明确支持的大模型权重文件扩展名
+    KNOWN_MODEL_EXTENSIONS = {
+        ".gguf": "GGUF",
+        ".safetensors": "SafeTensors",
+        ".onnx": "ONNX",
+        ".bin": "Binary Weights",
+        ".pt": "PyTorch Checkpoint",
+        ".pth": "PyTorch Checkpoint",
+        ".tflite": "TensorFlow Lite",
+        ".mlmodel": "CoreML",
+        ".mlpackage": "CoreML Package",
+    }
+
+    # 已知典型权重文件名模式
+    KNOWN_MODEL_FILENAMES = {
+        "weights.bin",
+        "model.bin",
+        "pytorch_model.bin",
+        "consolidated.00.pth",
+    }
+
+    @classmethod
+    def is_model_file(cls, filepath: str) -> tuple[bool, Optional[str]]:
+        """判定单个文件是否为大模型权重文件 (通过扩展名、文件名或 Magic Bytes)"""
+        basename = os.path.basename(filepath)
+        lower_name = basename.lower()
+        _, ext = os.path.splitext(lower_name)
+
+        # 1. 明确扩展名命中
+        if ext in [".gguf", ".safetensors", ".onnx", ".tflite", ".mlmodel"]:
+            return True, cls.KNOWN_MODEL_EXTENSIONS[ext]
+
+        if ext == ".pt":
+            return True, cls.KNOWN_MODEL_EXTENSIONS[ext]
+
+        if ext == ".pth":
+            # 排除 Python site-packages 中的 .pth 路径配置文件 (通常极小且为纯文本)
+            try:
+                if os.path.isfile(filepath):
+                    with open(filepath, "rb") as f:
+                        magic = f.read(4)
+                        # PyTorch .pth 通常是 zip (b"PK\x03\x04") 或 pickle (b"\x80")
+                        if magic.startswith(b"PK") or magic.startswith(b"\x80"):
+                            return True, cls.KNOWN_MODEL_EXTENSIONS[ext]
+                        return False, None
+            except Exception:
+                return False, None
+            return True, cls.KNOWN_MODEL_EXTENSIONS[ext]
+
+        # 2. .bin 权重文件识别
+        if lower_name in cls.KNOWN_MODEL_FILENAMES or lower_name.startswith("pytorch_model"):
+            return True, "Binary Weights"
+
+        if ext == ".bin":
+            try:
+                # 超过 10MB 的 .bin 文件或文件名包含 model/weight
+                size = os.path.getsize(filepath)
+                if size >= 10 * 1024 * 1024 or "model" in lower_name or "weight" in lower_name:
+                    return True, "Binary Weights"
+            except OSError:
+                pass
+
+        # 3. GGUF Magic Header 嗅探 (前 4 字节为 b"GGUF")
+        try:
+            if os.path.isfile(filepath) and os.path.getsize(filepath) >= 4:
+                with open(filepath, "rb") as f:
+                    header = f.read(4)
+                    if header == b"GGUF":
+                        return True, "GGUF"
+        except (OSError, PermissionError):
+            pass
+
+        return False, None
+
+    @classmethod
+    def _inspect_chrome_optguide(cls, dirpath: str) -> Optional[tuple[str, str]]:
+        """检测 Chrome Optimization Guide 端侧 Gemini Nano 模型"""
+        if "optguideondevicemodel" in dirpath.lower():
+            # 尝试解析子目录中的 manifest.json
+            try:
+                for root, _, files in os.walk(dirpath):
+                    if "manifest.json" in files:
+                        manifest_path = os.path.join(root, "manifest.json")
+                        with open(manifest_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            spec_name = data.get("BaseModelSpec", {}).get("name")
+                            if spec_name:
+                                return f"Gemini Nano ({spec_name})", "Chrome On-Device Weights (.bin)"
+                            elif "name" in data:
+                                return f"Gemini Nano ({data['name']})", "Chrome On-Device Weights (.bin)"
+            except Exception:
+                pass
+            return "Gemini Nano", "Chrome On-Device Weights (.bin)"
+        return None
+
+    @classmethod
+    def inspect_path(cls, path: str, max_files: int = 5000) -> AIModelInspectionResult:
+        """
+        全量探测指定路径自身或其内部是否包含大模型权重资产
+        """
+        normalized = normalize_path(path)
+        if not os.path.exists(normalized):
+            return AIModelInspectionResult()
+
+        # 1. 目标本身为单文件
+        if os.path.isfile(normalized) or os.path.islink(normalized):
+            is_model, fmt = cls.is_model_file(normalized)
+            if is_model:
+                try:
+                    fsize = os.path.getsize(normalized)
+                except OSError:
+                    fsize = 0
+                model_name = os.path.splitext(os.path.basename(normalized))[0]
+                return AIModelInspectionResult(
+                    is_model_weight=True,
+                    model_name=model_name,
+                    model_format=fmt or "AI Model",
+                    total_weight_bytes=fsize,
+                    model_files_count=1,
+                    detected_files=[normalized]
+                )
+            return AIModelInspectionResult()
+
+        # 2. 目标为目录
+        # 优先检测 Chrome Gemini Nano 特征
+        chrome_info = cls._inspect_chrome_optguide(normalized)
+        model_name = chrome_info[0] if chrome_info else None
+        model_format = chrome_info[1] if chrome_info else None
+
+        # 针对 Ollama 目录特定标记
+        if ".ollama" in normalized and "models" in normalized:
+            if not model_name:
+                model_name = "Ollama Local LLM Library"
+            if not model_format:
+                model_format = "GGUF Blobs"
+
+        # 针对 5ire / BGE-M3 目录特定标记
+        if "5ire" in normalized and "transformers-models" in normalized:
+            if not model_name:
+                model_name = "BGE-M3 Embedding Model"
+            if not model_format:
+                model_format = "ONNX"
+
+        detected_files = []
+        total_weight_bytes = 0
+        formats_seen = set()
+        scanned_count = 0
+
+        try:
+            for root, dirs, files in os.walk(normalized):
+                # 排除 .git, venv, node_modules, site-packages 等虚拟环境或开发目录
+                dirs[:] = [
+                    d for d in dirs
+                    if d.lower() not in {".git", "node_modules", "site-packages", "__pycache__", "dist-packages"}
+                    and "venv" not in d.lower()
+                    and not d.lower().startswith(".env")
+                ]
+                for f in files:
+                    scanned_count += 1
+                    if scanned_count > max_files:
+                        break
+                    fp = os.path.join(root, f)
+                    is_model, fmt = cls.is_model_file(fp)
+                    if is_model:
+                        try:
+                            fsize = os.path.getsize(fp)
+                        except OSError:
+                            fsize = 0
+                        detected_files.append(fp)
+                        total_weight_bytes += fsize
+                        if fmt:
+                            formats_seen.add(fmt)
+                if scanned_count > max_files:
+                    break
+        except OSError:
+            pass
+
+        if detected_files:
+            if not model_format and formats_seen:
+                model_format = ", ".join(sorted(formats_seen))
+            if not model_name:
+                if len(detected_files) == 1:
+                    model_name = os.path.splitext(os.path.basename(detected_files[0]))[0]
+                else:
+                    model_name = os.path.basename(normalized)
+
+            return AIModelInspectionResult(
+                is_model_weight=True,
+                model_name=model_name,
+                model_format=model_format or "AI Model",
+                total_weight_bytes=total_weight_bytes,
+                model_files_count=len(detected_files),
+                detected_files=detected_files
+            )
+
+        # 如果目录名为 OptGuideOnDeviceModel 但已被清空
+        if chrome_info:
+            return AIModelInspectionResult(
+                is_model_weight=True,
+                model_name=chrome_info[0],
+                model_format=chrome_info[1],
+                total_weight_bytes=0,
+                model_files_count=0,
+                detected_files=[]
+            )
+
+        return AIModelInspectionResult()
+
 
 @dataclass
 class ToolScanReport:
@@ -263,7 +489,12 @@ class RuleScanner:
                         continue
                     
                     size, count = self._get_path_size_and_count(p)
-                    is_model = item.get("is_model_weight", False) or cat_name == "ai_models"
+                    # 执行端侧 AI 模型与权重专项嗅探 (AIModelScanner)
+                    model_res = AIModelScanner.inspect_path(p)
+                    is_model = item.get("is_model_weight", False) or cat_name == "ai_models" or model_res.is_model_weight
+                    detected_model_name = item.get("model_name") or model_res.model_name
+                    detected_model_format = item.get("model_format") or model_res.model_format
+
                     has_secret = item.get("contains_secrets", False)
                     declared_level = item.get("risk_level")
 
@@ -305,7 +536,9 @@ class RuleScanner:
                         default_selected=default_selected,
                         is_safe=is_safe,
                         safety_reason=reason,
-                        risk_level=risk_lvl.value if isinstance(risk_lvl, RiskLevel) else str(risk_lvl)
+                        risk_level=risk_lvl.value if isinstance(risk_lvl, RiskLevel) else str(risk_lvl),
+                        model_name=detected_model_name,
+                        model_format=detected_model_format
                     )
                     targets.append(t_match)
 

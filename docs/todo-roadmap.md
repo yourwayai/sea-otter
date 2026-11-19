@@ -1,16 +1,16 @@
 # Sea-Otter (DevSweep) 演进路线与待办清单 (Optimization Backlog)
 
 > **版本定位**：基于 [architecture-and-lessons-learned.md](architecture-and-lessons-learned.md) (v1.2 Milestone Release) 实战指南提炼，记录项目后续的迭代规划与具体待办项。  
-> **更新状态**：已完成第 1 项（四级安全防护矩阵落地），剩余 **11 项待办任务** 如下。
+> **更新状态**：已完成前 2 项（四级安全防护矩阵、端侧大模型识别引擎），剩余 **10 项待办任务** 如下。
 
 ---
 
 ## 📋 待办进度看板 (Kanban)
 
 ```
-[ 已完成 (1) ] ──────────> [ 进行中 (0) ] ──────────> [ 待开始 (11) ]
-• 四级安全矩阵 (L1~L4)                                 • P0 阶段: 3 项
-                                                       • P1 阶段: 4 项
+[ 已完成 (2) ] ──────────> [ 进行中 (0) ] ──────────> [ 待开始 (10) ]
+• 四级安全矩阵 (L1~L4)                                 • P0 阶段: 2 项
+• 端侧大模型引擎 (AIModelScanner)                      • P1 阶段: 4 项
                                                        • P2 阶段: 4 项
 ```
 
@@ -18,15 +18,19 @@
 
 ## 阶段一：P0 核心资产与模型细分治理（最高优先级）
 
-### [ ] Task 01: 端侧大模型与权重专项识别引擎 (AIModelScanner)
+### [x] Task 01: 端侧大模型与权重专项识别引擎 (AIModelScanner)
 * **痛点/价值**：以 Google Chrome 为代表的现代软件会静默拉取 4GB 的端侧大模型（`OptGuideOnDeviceModel` / Gemini Nano），Ollama、Jan、Cherry Studio 也会下载海量权重（`.gguf`、`.safetensors`），传统清理工具对此完全失明。
 * **涉及模块**：
-  * `sea_otter/scanner.py`（增加模型扩展名与特征嗅探）
-  * `rules/google-chrome.yaml`（新增 Chrome 端侧模型规则）
-* **验收标准**：
-  1. 能独立嗅探 `.gguf` / `.safetensors` / `.onnx` / `.bin` 大模型权重文件；
-  2. 独立识别 Chrome 端侧模型并高亮标注 `[本地模型权重 (4.0 GB)]`；
-  3. 支持独立裁剪模型文件而不损毁宿主软件的运行配置。
+  * `sea_otter/scanner.py`（实现 `AIModelScanner`，支持 `.gguf`, `.safetensors`, `.onnx`, `.bin`, `.pt`, `GGUF` Magic Header 嗅探与 Chrome Optimization Guide 解析）
+  * `rules/google-chrome.yaml` / `sea_otter/rules/google-chrome.yaml`（新增 Chrome 端侧模型与缓存规则，严密排除 `Default/` 与 `Profile *` 用户目录）
+  * `sea_otter/ui.py`（增加 `get_model_badge` 视觉标签 `🧠[本地模型权重 (4.0 GB)]`）
+  * `sea_otter/cli.py`（支持 `scan -m / --models` 与 `clean --models` 专项扫描与修剪模式）
+  * `schema/rule.schema.json`（扩充 `is_model_weight`, `model_name`, `model_format`, `regenerable` 规范）
+* **验收结果**：
+  1. ✅ 能够精准嗅探并识别 `.gguf`、`.safetensors`、`.onnx`、`.bin`、`.pt` 及 Magic Header；
+  2. ✅ 准确识别系统上真实存在的 Chrome Gemini Nano（`OptGuideOnDeviceModel`，4.0 GB）并在 CLI 呈现醒目标签；
+  3. ✅ 支持通过 `sea-otter clean --models` 进行独立模型修剪减负，安全保护宿主应用账号与配置；
+  4. ✅ 单元测试全套覆盖并通过验证。
 
 ---
 

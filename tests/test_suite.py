@@ -11,7 +11,7 @@ import subprocess
 import json
 import yaml
 
-from sea_otter.scanner import RuleScanner, TargetMatch
+from sea_otter.scanner import RuleScanner, TargetMatch, AIModelScanner
 from sea_otter.safety import validate_target_safety, contains_workspace_or_repo, normalize_path
 from sea_otter.cleaner import SafeCleaner
 
@@ -283,6 +283,90 @@ class TestCLIExecution(unittest.TestCase):
         proc = subprocess.run(["sea-otter", "clean", "--dry-run"], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0)
         self.assertIn("Dry-run 只读模式", proc.stdout)
+
+    def test_cli_scan_models_flag(self):
+        proc = subprocess.run(["sea-otter", "scan", "-m", "--json"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0)
+        data = json.loads(proc.stdout)
+        self.assertIsInstance(data, list)
+        for tool in data:
+            for t in tool.get("targets", []):
+                self.assertTrue(t.get("is_model_weight") or t.get("category") == "ai_models")
+
+    def test_cli_clean_models_dry_run(self):
+        proc = subprocess.run(["sea-otter", "clean", "google-chrome", "--models", "--dry-run"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("Dry-run 只读模式", proc.stdout)
+
+
+class TestAIModelScanner(unittest.TestCase):
+    def test_model_file_extensions(self):
+        cases = [
+            ("model.gguf", "GGUF"),
+            ("weights.safetensors", "SafeTensors"),
+            ("encoder.onnx", "ONNX"),
+            ("checkpoint.pt", "PyTorch Checkpoint"),
+            ("model.tflite", "TensorFlow Lite"),
+            ("classifier.mlmodel", "CoreML"),
+            ("weights.bin", "Binary Weights"),
+        ]
+        for fname, expected_fmt in cases:
+            is_model, fmt = AIModelScanner.is_model_file(f"/dummy/path/{fname}")
+            self.assertTrue(is_model, f"文件 {fname} 应被识别为模型")
+            self.assertEqual(fmt, expected_fmt)
+
+    def test_gguf_magic_header(self):
+        with tempfile.NamedTemporaryFile(suffix=".tmp") as tmp:
+            tmp.write(b"GGUF\x00\x00\x00\x03some_tensor_bytes")
+            tmp.flush()
+            is_model, fmt = AIModelScanner.is_model_file(tmp.name)
+            self.assertTrue(is_model)
+            self.assertEqual(fmt, "GGUF")
+
+    def test_pth_python_vs_pytorch(self):
+        # 1. 文本 .pth (Python path file)
+        with tempfile.NamedTemporaryFile(suffix=".pth", mode="w") as tmp_txt:
+            tmp_txt.write("import sys; sys.path.insert(0, '/some/dir')\n")
+            tmp_txt.flush()
+            is_model, _ = AIModelScanner.is_model_file(tmp_txt.name)
+            self.assertFalse(is_model, "Python site-packages 路径配置 .pth 不应被误判为模型权重")
+
+        # 2. 二进制 .pth (PyTorch zip or pickle)
+        with tempfile.NamedTemporaryFile(suffix=".pth", mode="wb") as tmp_bin:
+            tmp_bin.write(b"PK\x03\x04pytorch_archive_bytes")
+            tmp_bin.flush()
+            is_model, fmt = AIModelScanner.is_model_file(tmp_bin.name)
+            self.assertTrue(is_model, "包含 PK 头的 PyTorch .pth 应被识别为模型权重")
+            self.assertEqual(fmt, "PyTorch Checkpoint")
+
+    def test_chrome_optguide_detection(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            chrome_opt_dir = os.path.join(tmp_dir, "OptGuideOnDeviceModel", "version_123")
+            os.makedirs(chrome_opt_dir)
+            manifest_file = os.path.join(chrome_opt_dir, "manifest.json")
+            with open(manifest_file, "w") as f:
+                json.dump({"BaseModelSpec": {"name": "v3Nano"}}, f)
+            weights_file = os.path.join(chrome_opt_dir, "weights.bin")
+            with open(weights_file, "wb") as f:
+                f.write(b"dummy_weights" * 100)
+
+            res = AIModelScanner.inspect_path(chrome_opt_dir)
+            self.assertTrue(res.is_model_weight)
+            self.assertIn("Gemini Nano", res.model_name)
+            self.assertIn("v3Nano", res.model_name)
+            self.assertEqual(res.model_files_count, 1)
+
+    def test_ignore_virtualenv_in_inspect(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            venv_dir = os.path.join(tmp_dir, "my_project", ".venv", "site-packages")
+            os.makedirs(venv_dir)
+            dummy_onnx = os.path.join(venv_dir, "library_model.onnx")
+            with open(dummy_onnx, "wb") as f:
+                f.write(b"onnx_content")
+
+            project_dir = os.path.join(tmp_dir, "my_project")
+            res = AIModelScanner.inspect_path(project_dir)
+            self.assertFalse(res.is_model_weight, "虚拟环境内部库的模型不应导致整个项目目录被误判为端侧模型权重资产")
 
 
 if __name__ == "__main__":

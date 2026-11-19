@@ -5,6 +5,7 @@
 
 import os
 import sys
+from typing import Optional
 
 # 终端 ANSI 色彩代码
 class Color:
@@ -123,4 +124,12 @@ def get_risk_badge(risk_level: str) -> str:
     elif risk_level == "L4_DANGER":
         return c("[L4 绝对红线·硬阻断]", Color.BOLD, Color.BRIGHT_RED)
     return c(f"[{risk_level}]", Color.DIM)
+
+def get_model_badge(is_model: bool, size_bytes: int = 0, model_name: Optional[str] = None) -> str:
+    """获取端侧大模型高亮徽标 (含容量高亮提示)"""
+    if not is_model:
+        return ""
+    size_str = f" ({format_size(size_bytes)})" if size_bytes > 0 else ""
+    return c(f" 🧠[本地模型权重{size_str}]", Color.BOLD, Color.BRIGHT_CYAN)
+
 

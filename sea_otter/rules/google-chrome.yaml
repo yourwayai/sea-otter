@@ -1,0 +1,61 @@
+id: google-chrome
+name: Google Chrome
+category: browser
+vendor: Google
+homepage: https://www.google.com/chrome
+
+# 1. 活跃保护机制 (避免误删正在运行中的浏览器)
+protection:
+  process_names:
+    - "Google Chrome"
+    - "Google Chrome Helper"
+  lock_files:
+    - ~/Library/Application Support/Google/Chrome/SingletonLock
+    - ~/Library/Application Support/Google/Chrome/SingletonSocket
+
+# 2. 安装状态检测
+detection:
+  app_bundle_id:
+    - com.google.Chrome
+  app_paths:
+    - /Applications/Google Chrome.app
+
+# 3. 目标细分与端侧大模型专项标注
+targets:
+  ai_models:
+    - path: ~/Library/Application Support/Google/Chrome/OptGuideOnDeviceModel
+      description: "Chrome Optimization Guide 端侧 AI 大语言模型 (Gemini Nano)"
+      is_model_weight: true
+      model_name: "Gemini Nano"
+      model_format: "weights.bin"
+      regenerable: true
+      default_selected: false
+      risk_level: L3_IN_USE
+
+  caches:
+    - path: ~/Library/Caches/Google/Chrome
+      description: "Chrome 网页、代码与 GPU 渲染缓存"
+      default_selected: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Google/Chrome/component_crx_cache
+      description: "已安装扩展组件 CRX 静默安装包缓存"
+      default_selected: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Google/Chrome/OptGuidePredictionModels
+      description: "Chrome Optimization Guide 网页优化轻量预测模型缓存"
+      default_selected: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Google/Chrome/OptGuideOnDeviceClassifierModel
+      description: "Chrome 网页内容分类模型临时缓存"
+      default_selected: true
+      risk_level: L1_SAFE
+
+safety:
+  protect_git_repos: true
+  protect_workspaces: true
+  exclude_paths:
+    - ~/Library/Application Support/Google/Chrome/Default
+    - ~/Library/Application Support/Google/Chrome/Profile *

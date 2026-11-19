@@ -12,7 +12,7 @@ from sea_otter.scanner import RuleScanner, ToolScanReport, TargetMatch
 from sea_otter.cleaner import SafeCleaner
 from sea_otter.safety import RiskLevel
 from sea_otter.ui import (
-    c, Color, format_size, print_banner, get_status_badge, get_risk_badge, CATEGORY_NAMES
+    c, Color, format_size, print_banner, get_status_badge, get_risk_badge, get_model_badge, CATEGORY_NAMES
 )
 
 def cmd_scan(args, scanner: RuleScanner):
@@ -22,6 +22,13 @@ def cmd_scan(args, scanner: RuleScanner):
 
     tools_filter = args.tools if args.tools else None
     reports = scanner.scan_all(filter_ids=tools_filter)
+
+    only_models = getattr(args, "models", False)
+    if only_models:
+        for r in reports:
+            r.targets = [t for t in r.targets if t.is_model_weight or t.category == "ai_models"]
+            r.total_size_bytes = sum(t.size_bytes for t in r.targets)
+            r.model_weight_size_bytes = sum(t.size_bytes for t in r.targets if t.is_model_weight)
 
     if args.json:
         # JSON 格式输出，方便集成外部工具 (如 Raycast 插件)
@@ -48,6 +55,8 @@ def cmd_scan(args, scanner: RuleScanner):
                         "size_bytes": t.size_bytes,
                         "contains_secrets": t.contains_secrets,
                         "is_model_weight": t.is_model_weight,
+                        "model_name": t.model_name,
+                        "model_format": t.model_format,
                         "risk_level": t.risk_level,
                         "default_selected": t.default_selected,
                         "is_safe": t.is_safe,
@@ -81,7 +90,10 @@ def cmd_scan(args, scanner: RuleScanner):
         print(c("✨ 太棒了！未发现任何已安装的 AI 工具或残留文件，环境非常整洁。", Color.GREEN))
         return
 
-    print(c("🔍 正在扫描系统中的 AI 开发者工具与 Agent 残留...", Color.BOLD))
+    if only_models:
+        print(c("🧠 正在扫描系统中的本地端侧 AI 大模型与权重占用...", Color.BOLD, Color.BRIGHT_CYAN))
+    else:
+        print(c("🔍 正在扫描系统中的 AI 开发者工具与 Agent 残留...", Color.BOLD))
     print()
 
     for r in visible_reports:
@@ -103,12 +115,15 @@ def cmd_scan(args, scanner: RuleScanner):
                 cat_desc = CATEGORY_NAMES.get(t.category, t.category)
                 risk_badge = get_risk_badge(t.risk_level)
                 secret_badge = c(" 🔑[敏感凭证]", Color.BOLD, Color.RED) if t.contains_secrets else ""
-                model_badge = c(" 🧠[本地模型权重]", Color.BOLD, Color.BRIGHT_CYAN) if t.is_model_weight else ""
+                model_badge = get_model_badge(t.is_model_weight, t.size_bytes, t.model_name)
                 safety_badge = "" if t.is_safe else c(f" ⚠️[{t.safety_reason}]", Color.BOLD, Color.BRIGHT_RED)
                 
                 print(f"     • [{c(cat_desc, Color.MAGENTA)}] {risk_badge} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_badge}{model_badge}{safety_badge}")
                 if t.description:
-                    print(f"       {c('↳ ' + t.description, Color.DIM)}")
+                    desc_text = t.description
+                    if t.model_name and t.model_name not in desc_text:
+                        desc_text = f"[{t.model_name}] {desc_text}"
+                    print(f"       {c('↳ ' + desc_text, Color.DIM)}")
         else:
             print(f"   {c('状态:', Color.DIM)} {c('无任何残留占用', Color.DIM)}")
         print()
@@ -153,7 +168,10 @@ def cmd_clean(args, scanner: RuleScanner):
     if args.category:
         categories_filter = [c.strip() for c in args.category.split(",") if c.strip()]
 
+    only_models = getattr(args, "models", False)
     include_l3 = getattr(args, "include_l3", False)
+    if only_models:
+        include_l3 = True
 
     # 筛选待清理目标
     candidates: List[TargetMatch] = []
@@ -167,12 +185,16 @@ def cmd_clean(args, scanner: RuleScanner):
             if categories_filter and t.category not in categories_filter:
                 continue
 
+            # 专项模型过滤
+            if only_models and not t.is_model_weight and t.category != "ai_models":
+                continue
+
             # 1. 绝对系统红线或被安全防线拦截的目标，绝对阻断 (L4: Protected System)
             if t.risk_level == RiskLevel.L4_DANGER.value or not t.is_safe:
                 skipped_unsafe_count += 1
                 continue
 
-            # 2. L3 (在用软件减负) 默认不勾选，需用户显式指定 --include-l3
+            # 2. L3 (在用软件减负) 默认不勾选，需用户显式指定 --include-l3 (或使用 --models 专项参数)
             if t.risk_level == RiskLevel.L3_IN_USE.value and not include_l3:
                 skipped_l3_count += 1
                 skipped_l3_bytes += t.size_bytes
@@ -189,7 +211,7 @@ def cmd_clean(args, scanner: RuleScanner):
         print(c("✨ 没有可清理的目标项！", Color.GREEN))
         if skipped_l3_count > 0:
             print(f"ℹ️ 检测到 {c(str(skipped_l3_count), Color.BOLD)} 处 L3 在用软件减负目标 (共 {c(format_size(skipped_l3_bytes), Color.YELLOW)})，默认已受保护未勾选。")
-            print(f"   如需深度清理正在使用的软件模型权重或缓存，请带上 {c('--include-l3', Color.CYAN)} 参数。")
+            print(f"   如需深度清理正在使用的软件模型权重或缓存，请带上 {c('--include-l3', Color.CYAN)} 或 {c('--models', Color.CYAN)} 参数。")
         if skipped_secrets_count > 0:
             print(f"ℹ️ 检测到 {skipped_secrets_count} 处敏感凭证，默认已被跳过（如需清理请带上 {c('--include-secrets', Color.YELLOW)}）。")
         return
@@ -200,7 +222,10 @@ def cmd_clean(args, scanner: RuleScanner):
     for t in candidates:
         secret_mark = c(" 🔑[敏感凭证]", Color.RED) if t.contains_secrets else ""
         risk_mark = get_risk_badge(t.risk_level)
-        print(f"  [{c(CATEGORY_NAMES.get(t.category, t.category), Color.MAGENTA)}] {risk_mark} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_mark}")
+        model_mark = f" {get_model_badge(t.is_model_weight, t.size_bytes, t.model_name)}" if (t.is_model_weight or t.category == "ai_models") else ""
+        print(f"  [{c(CATEGORY_NAMES.get(t.category, t.category), Color.MAGENTA)}] {risk_mark}{model_mark} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_mark}")
+        if t.model_name:
+            print(f"    {c(f'🧠 模型名称: {t.model_name} (可独立修剪/不破坏宿主主配置)', Color.CYAN)}")
         print(f"    {c(t.description, Color.DIM)}")
 
     print()
@@ -351,7 +376,7 @@ def cmd_interactive_dashboard(scanner: RuleScanner):
     print(f"  {c('1', Color.BOLD, Color.BRIGHT_CYAN)}  🔍 全盘扫描体检 (输出 AI 工具安装状态与孤儿残留占用)")
     print(f"  {c('2', Color.BOLD, Color.BRIGHT_GREEN)}  🛡️ 安全清理预览 (Dry-run 模拟预览哪些文件会被移入废纸篓)")
     print(f"  {c('3', Color.BOLD, Color.BRIGHT_YELLOW)}  🧹 一键清理缓存 (安全清理所有纯缓存，移入废纸篓)")
-    print(f"  {c('4', Color.BOLD, Color.MAGENTA)}  📋 查看收录规则 (浏览当前收录的 14 款 AI 工具规则清单)")
+    print(f"  {c('4', Color.BOLD, Color.MAGENTA)}  📋 查看收录规则 (浏览当前收录的 {len(scanner.rules)} 款 AI 工具规则清单)")
     print(f"  {c('5', Color.BOLD, Color.BRIGHT_BLUE)}  ℹ️ 关于项目理念 (了解 Sea-Otter 诞生背景与安全设计)")
     print(f"  {c('6', Color.BOLD, Color.WHITE)}  🌐 访问官方仓库 (打开 GitHub 仓库主页)")
     print(f"  {c('q', Color.DIM)}  🚪 退出程序")
@@ -419,12 +444,14 @@ def main():
     p_scan = subparsers.add_parser("scan", help="扫描系统中的 AI 开发者工具状态与残留占用")
     p_scan.add_argument("tools", nargs="*", help="指定要扫描的工具 ID (如 cursor, codex)，默认扫描全部")
     p_scan.add_argument("-a", "--all", dest="show_all", action="store_true", help="显示所有工具（包含未安装且无残留项）")
+    p_scan.add_argument("-m", "--models", action="store_true", help="仅显示本地 AI 端侧模型与权重占用")
     p_scan.add_argument("--json", action="store_true", help="以 JSON 格式输出扫描结果")
 
     # clean
     p_clean = subparsers.add_parser("clean", help="安全清理指定的工具残留或缓存 (移入废纸篓)")
     p_clean.add_argument("tools", nargs="*", help="指定要清理的工具 ID (可选)")
     p_clean.add_argument("-c", "--category", help="按分类过滤 (如 caches,data_and_history)")
+    p_clean.add_argument("-m", "--models", action="store_true", help="专项清理本地 AI 端侧大模型与权重文件 (保留应用主配置与在用数据)")
     p_clean.add_argument("-n", "--dry-run", action="store_true", help="只读模式，仅预览待清理目标与空间，不进行实际移动")
     p_clean.add_argument("--include-l3", action="store_true", help="允许清理 L3 在用软件减负项 (如正在使用的端侧大模型、本地缓存)，默认安全跳过保护")
     p_clean.add_argument("--include-secrets", action="store_true", help="允许清理敏感凭证 (如 Token/API 密钥)，默认安全跳过")
