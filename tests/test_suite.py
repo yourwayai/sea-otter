@@ -14,6 +14,7 @@ import yaml
 from sea_otter.scanner import RuleScanner, TargetMatch, AIModelScanner
 from sea_otter.safety import validate_target_safety, contains_workspace_or_repo, normalize_path
 from sea_otter.cleaner import SafeCleaner
+from sea_otter.validator import validate_rule_schema_v12
 
 
 class TestRules(unittest.TestCase):
@@ -449,6 +450,110 @@ class TestAIModelScanner(unittest.TestCase):
             project_dir = os.path.join(tmp_dir, "my_project")
             res = AIModelScanner.inspect_path(project_dir)
             self.assertFalse(res.is_model_weight, "虚拟环境内部库的模型不应导致整个项目目录被误判为端侧模型权重资产")
+
+
+class TestRuleSchemaV12(unittest.TestCase):
+    """测试 Rule Schema v1.2 规范与字段完整性校验器"""
+
+    def setUp(self):
+        self.scanner = RuleScanner()
+        self.rules = self.scanner.load_rules()
+
+    def test_all_rules_pass_v12_validator(self):
+        self.assertGreaterEqual(len(self.rules), 15, "收录规则数量应不少于 15 款")
+        for r in self.rules:
+            is_valid, errors = validate_rule_schema_v12(r)
+            self.assertTrue(is_valid, f"规则 [{r.get('id')}] 未通过 Schema v1.2 校验: {errors}")
+
+    def test_invalid_rule_id(self):
+        invalid_rule = {
+            "id": "Invalid_ID_Uppercase",
+            "name": "Invalid Tool",
+            "category": "ide",
+            "targets": {"caches": [{"path": "/a", "description": "desc"}]}
+        }
+        is_valid, errors = validate_rule_schema_v12(invalid_rule)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("id" in err for err in errors))
+
+    def test_invalid_category(self):
+        invalid_rule = {
+            "id": "valid-id",
+            "name": "Tool",
+            "category": "invalid-category-xyz",
+            "targets": {"caches": [{"path": "/a", "description": "desc"}]}
+        }
+        is_valid, errors = validate_rule_schema_v12(invalid_rule)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("category" in err for err in errors))
+
+    def test_channels_validation(self):
+        valid_rule = {
+            "id": "browser-tool",
+            "name": "Browser Tool",
+            "category": "browser",
+            "channels": {
+                "current_channel": "stable",
+                "related_channels": [
+                    {"id": "browser-beta", "name": "Browser Beta", "channel": "beta"}
+                ]
+            },
+            "targets": {"caches": [{"path": "/a", "description": "desc"}]}
+        }
+        is_valid, errors = validate_rule_schema_v12(valid_rule)
+        self.assertTrue(is_valid, errors)
+
+        invalid_rule = {
+            "id": "browser-tool",
+            "name": "Browser Tool",
+            "category": "browser",
+            "channels": {
+                "related_channels": [
+                    {"id": "missing-name"} # 缺少 name
+                ]
+            },
+            "targets": {"caches": [{"path": "/a", "description": "desc"}]}
+        }
+        is_valid, errors = validate_rule_schema_v12(invalid_rule)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("name" in err for err in errors))
+
+    def test_ghost_rules_validation(self):
+        valid_rule = {
+            "id": "ghost-tool",
+            "name": "Ghost Tool",
+            "category": "runtime",
+            "ghost_rules": {
+                "root_patterns": [
+                    {
+                        "regex": r"^\(null\)$",
+                        "description": "空指针幽灵目录",
+                        "risk_level": "L1_SAFE"
+                    }
+                ]
+            },
+            "targets": {"caches": [{"path": "/a", "description": "desc"}]}
+        }
+        is_valid, errors = validate_rule_schema_v12(valid_rule)
+        self.assertTrue(is_valid, errors)
+
+        invalid_regex_rule = {
+            "id": "ghost-tool",
+            "name": "Ghost Tool",
+            "category": "runtime",
+            "ghost_rules": {
+                "root_patterns": [
+                    {
+                        "regex": r"^([a-z$",  # 非法未闭合正则
+                        "description": "非法正则"
+                    }
+                ]
+            },
+            "targets": {"caches": [{"path": "/a", "description": "desc"}]}
+        }
+        is_valid, errors = validate_rule_schema_v12(invalid_regex_rule)
+        self.assertFalse(is_valid)
+        self.assertTrue(any("正则" in err for err in errors))
 
 
 if __name__ == "__main__":

@@ -20,7 +20,22 @@ detection:
   app_paths:
     - /Applications/Google Chrome.app
 
-# 3. 目标细分与端侧大模型专项标注
+# 3. 多通道分支定义 (Schema v1.2)
+channels:
+  current_channel: stable
+  related_channels:
+    - id: chrome-canary
+      name: "Google Chrome Canary"
+      channel: canary
+      data_path: ~/Library/Application Support/Google/Chrome Canary
+      app_bundle_id: com.google.Chrome.canary
+      app_path: /Applications/Google Chrome Canary.app
+    - id: chrome-beta
+      name: "Google Chrome Beta"
+      channel: beta
+      data_path: ~/Library/Application Support/Google/Chrome Beta
+
+# 4. 目标细分与端侧大模型专项标注
 targets:
   ai_models:
     - path: ~/Library/Application Support/Google/Chrome/OptGuideOnDeviceModel
@@ -29,6 +44,7 @@ targets:
       model_name: "Gemini Nano"
       model_format: "weights.bin"
       regenerable: true
+      prunable: true
       default_selected: false
       risk_level: L3_IN_USE
 
@@ -52,6 +68,15 @@ targets:
       description: "Chrome 网页内容分类模型临时缓存"
       default_selected: true
       risk_level: L1_SAFE
+
+# 5. 根目录与幽灵项匹配 (Schema v1.2)
+ghost_rules:
+  root_patterns:
+    - regex: '^\.org\.chromium\.Chromium\..*$'
+      description: "Chromium 引擎历史临时套接字或残留锁"
+      risk_level: L1_SAFE
+      target_roots:
+        - ~/Library/Application Support/Google/Chrome
 
 safety:
   protect_git_repos: true

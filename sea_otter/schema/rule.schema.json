@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://devsweep.dev/schemas/v1.1/rule.schema.json",
+  "$id": "https://devsweep.dev/schemas/v1.2/rule.schema.json",
   "title": "DevSweepRule",
-  "description": "Rule specification for detecting, guarding and cleaning AI & developer tools (Schema v1.1)",
+  "description": "Rule specification for detecting, guarding and cleaning AI & developer tools (Schema v1.2)",
   "type": "object",
   "required": ["id", "name", "category", "targets"],
   "properties": {
@@ -68,6 +68,52 @@
       },
       "additionalProperties": false
     },
+    "channels": {
+      "type": "object",
+      "description": "Multi-channel release matrix definition (e.g. Stable vs Canary vs Beta)",
+      "properties": {
+        "current_channel": {
+          "type": "string",
+          "description": "Release channel identifier of this rule (e.g. 'stable', 'canary', 'beta', 'dev')"
+        },
+        "related_channels": {
+          "type": "array",
+          "description": "Other release channels in the same product family",
+          "items": {
+            "type": "object",
+            "required": ["id", "name"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Identifier of the related channel (e.g., 'chrome-canary', 'edge-dev')"
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name of the related channel"
+              },
+              "channel": {
+                "type": "string",
+                "description": "Channel type (e.g., 'canary', 'beta', 'dev')"
+              },
+              "data_path": {
+                "type": "string",
+                "description": "Application data directory path for this channel"
+              },
+              "app_bundle_id": {
+                "type": "string",
+                "description": "macOS bundle ID for this channel"
+              },
+              "app_path": {
+                "type": "string",
+                "description": "Application bundle path on macOS"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "targets": {
       "type": "object",
       "description": "Categorized target cleanup paths",
@@ -106,6 +152,43 @@
           "type": "array",
           "items": { "$ref": "#/$defs/targetItem" },
           "description": "Installed CLI scripts and executable wrappers"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ghost_rules": {
+      "type": "object",
+      "description": "Rules for detecting ghost directories, skeleton empty trees, or root-level scattered bugs",
+      "properties": {
+        "root_patterns": {
+          "type": "array",
+          "description": "Regular expressions matching abnormal ghost files or directories directly in root storage locations",
+          "items": {
+            "type": "object",
+            "required": ["regex", "description"],
+            "properties": {
+              "regex": {
+                "type": "string",
+                "description": "Regular expression pattern matching abnormal root file or directory names (e.g., '^\\\\(null\\\\)$')"
+              },
+              "description": {
+                "type": "string",
+                "description": "Explanation of what causes this ghost artifact"
+              },
+              "risk_level": {
+                "type": "string",
+                "enum": ["L1_SAFE", "L2_ORPHAN", "L3_IN_USE", "L4_DANGER"],
+                "default": "L1_SAFE",
+                "description": "Risk matrix classification, usually L1_SAFE for ghost junk"
+              },
+              "target_roots": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Target root locations where this regex should be evaluated (e.g., '~/Library/Application Support')"
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false

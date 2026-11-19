@@ -1,22 +1,23 @@
 # Sea-Otter (DevSweep) 演进路线与待办清单 (Optimization Backlog)
 
 > **版本定位**：基于 [architecture-and-lessons-learned.md](architecture-and-lessons-learned.md) (v1.2 Milestone Release) 实战指南提炼，记录项目后续的迭代规划与具体待办项。  
-> **更新状态**：已完成前 3 项（四级安全防护矩阵、端侧大模型识别引擎、本地会话与向量嵌入细粒度裁剪），剩余 **9 项待办任务** 如下。
+> **更新状态**：已完成前 4 项（四级安全防护矩阵、端侧大模型识别引擎、本地会话与向量裁剪、Schema v1.2 规范与校验），**P0 阶段全部圆满达成**，剩余 **8 项待办任务** 如下。
 
 ---
 
 ## 📋 待办进度看板 (Kanban)
 
 ```
-[ 已完成 (3) ] ──────────> [ 进行中 (0) ] ──────────> [ 待开始 (9) ]
-• 四级安全矩阵 (L1~L4)                                 • P0 阶段: 1 项
+[ 已完成 (4) ] ──────────> [ 进行中 (0) ] ──────────> [ 待开始 (8) ]
+• 四级安全矩阵 (L1~L4)                                 • P0 阶段: 0 项 (全部达成!)
 • 端侧大模型引擎 (AIModelScanner)                      • P1 阶段: 4 项
 • 细粒度会话与向量裁剪 (Slim Mode)                     • P2 阶段: 4 项
+• 规则 Schema v1.2 规范与校验 (Validator)
 ```
 
 ---
 
-## 阶段一：P0 核心资产与模型细分治理（最高优先级）
+## 阶段一：P0 核心资产与模型细分治理（最高优先级，已全部完成 🎉）
 
 ### [x] Task 01: 端侧大模型与权重专项识别引擎 (AIModelScanner)
 * **痛点/价值**：以 Google Chrome 为代表的现代软件会静默拉取 4GB 的端侧大模型（`OptGuideOnDeviceModel` / Gemini Nano），Ollama、Jan、Cherry Studio 也会下载海量权重（`.gguf`、`.safetensors`），传统清理工具对此完全失明。
@@ -50,17 +51,19 @@
 
 ---
 
-### [ ] Task 03: 规则库 Schema v1.2 升级与数据规范校验
-* **痛点/价值**：目前的 `schema/rule.schema.json` 缺少对发布通道分支、端侧模型特征与幽灵目录规则的约束。
+### [x] Task 03: 规则库 Schema v1.2 升级与数据规范校验
+* **痛点/价值**：此前的 `schema/rule.schema.json` 缺少对发布通道分支、端侧模型特征与幽灵目录规则的约束，验证时缺少全字段深度语义校验。
 * **涉及模块**：
-  * `schema/rule.schema.json`
-  * `sea_otter/schema/rule.schema.json`
-  * `sea_otter/cli.py` (`cmd_rules validate`)
-* **验收标准**：
-  1. Schema 新增 `channels`（多通道分支矩阵定义，含 `current_channel`、`related_channels`）；
-  2. Schema 新增 `targets.ai_models`（支持 `is_model_weight`、`regenerable` 声明）；
-  3. Schema 新增 `ghost_rules`（支持 `root_patterns` 正则规则）；
-  4. 运行 `sea-otter rules validate` 能全面校验新老规则。
+  * `schema/rule.schema.json` & `sea_otter/schema/rule.schema.json`（全面升级至 Schema v1.2）
+  * `sea_otter/validator.py`（实现轻量零依赖的 Rule Schema v1.2 深度校验器）
+  * `sea_otter/cli.py` (`cmd_rules validate` 支持展示通道分支与幽灵规则状态）
+  * `rules/google-chrome.yaml` / `sea_otter/rules/google-chrome.yaml`（落地 channels 与 ghost_rules 生产示例）
+* **验收结果**：
+  1. ✅ Schema 新增 `channels`（定义 `current_channel` 与 `related_channels` 矩阵）；
+  2. ✅ Schema 完善 `targets.ai_models`（包含 `is_model_weight`、`model_name`、`model_format`、`regenerable`、`prunable`、`sub_targets` 声明）；
+  3. ✅ Schema 新增 `ghost_rules`（支持 `root_patterns` 与正则表达式语法校验）；
+  4. ✅ 运行 `sea-otter rules validate` 成功全量校验当前 15 条内置规则，并输出通道与幽灵规则特征；
+  5. ✅ 单元测试新增 `TestRuleSchemaV12`，全覆盖正常与各类异常（非法 ID、非法类别、缺少字段、无效正则等）场景。
 
 ---
 

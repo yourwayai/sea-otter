@@ -11,6 +11,7 @@ from typing import List, Optional
 from sea_otter.scanner import RuleScanner, ToolScanReport, TargetMatch
 from sea_otter.cleaner import SafeCleaner
 from sea_otter.safety import RiskLevel
+from sea_otter.validator import validate_rule_schema_v12
 from sea_otter.ui import (
     c, Color, format_size, print_banner, get_status_badge, get_risk_badge, get_model_badge, get_prunable_badge, CATEGORY_NAMES
 )
@@ -331,48 +332,30 @@ def cmd_rules(args, scanner: RuleScanner):
             print(f"  {c(r.get('id', ''), Color.CYAN):<20} {r.get('name', ''):<28} {r.get('category', ''):<15} {c(r.get('vendor', ''), Color.DIM)}")
         print()
     elif args.rule_action == "validate":
-        print(c("🔍 正在校验所有规则文件的格式与字段完整度...", Color.BOLD))
+        print(c("🔍 正在校验所有规则文件的格式与字段完整度 (Rule Schema v1.2)...", Color.BOLD))
         valid_count = 0
         for r in rules:
-            rid = r.get("id")
-            name = r.get("name")
-            category = r.get("category")
-            targets = r.get("targets", {})
-            if not rid or not name or not category or not targets:
-                print(f"  {c('✖', Color.RED)} 规则 {rid or '未知'} 缺少核心必填字段！")
+            rid = r.get("id", "unknown")
+            is_valid, errors = validate_rule_schema_v12(r)
+            if not is_valid:
+                print(f"  {c('✖', Color.RED)} 规则 [{c(rid, Color.CYAN)}] 校验失败:")
+                for err in errors:
+                    print(f"      {c('↳ ' + err, Color.RED)}")
             else:
                 valid_count += 1
-                print(f"  {c('✔', Color.GREEN)} 规则 [{c(rid, Color.CYAN)}] 校验通过 (包含 {sum(len(v) for v in targets.values())} 处目标定义)")
-        print(f"\n✨ 校验完毕: {valid_count}/{len(rules)} 条规则完全合规。")
-
-def main():
-    parser = argparse.ArgumentParser(
-        prog="sea-otter",
-        description="🦦 Sea-Otter: 面向新一代 AI 编程工具与 Agent CLI 的精细化清理与体检工具"
-    )
-    parser.add_argument("--version", action="version", version="Sea-Otter v1.0.0")
-
-    subparsers = parser.add_subparsers(dest="command", help="可用子命令")
-
-    # scan
-    p_scan = subparsers.add_parser("scan", help="扫描系统中的 AI 开发者工具状态与残留占用")
-    p_scan.add_argument("tools", nargs="*", help="指定要扫描的工具 ID (如 cursor, codex)，默认扫描全部")
-    p_scan.add_argument("-a", "--all", dest="show_all", action="store_true", help="显示所有工具（包含未安装且无残留项）")
-    p_scan.add_argument("--json", action="store_true", help="以 JSON 格式输出扫描结果")
-
-    # clean
-    p_clean = subparsers.add_parser("clean", help="安全清理指定的工具残留或缓存 (移入废纸篓)")
-    p_clean.add_argument("tools", nargs="*", help="指定要清理的工具 ID (可选)")
-    p_clean.add_argument("-c", "--category", help="按分类过滤 (如 caches,data_and_history)")
-    p_clean.add_argument("-n", "--dry-run", action="store_true", help="只读模式，仅预览待清理目标与空间，不进行实际移动")
-    p_clean.add_argument("--include-secrets", action="store_true", help="允许清理敏感凭证 (如 Token/API 密钥)，默认安全跳过")
-    p_clean.add_argument("-y", "--yes", action="store_true", help="无需交互确认，直接移入废纸篓")
-
-    # rules
-    p_rules = subparsers.add_parser("rules", help="查看或校验内置规则库")
-    p_rules.add_argument("rule_action", choices=["list", "validate"], default="list", nargs="?", help="list (查看列表) 或 validate (校验规则规范)")
-
-    args = parser.parse_args()
+                targets = r.get("targets", {})
+                target_count = sum(len(v) for v in targets.values() if isinstance(v, list))
+                extras = []
+                if "channels" in r:
+                    cur = r["channels"].get("current_channel", "unknown")
+                    rel_count = len(r["channels"].get("related_channels", []))
+                    extras.append(f"通道: {cur} ({rel_count} 关联通道)")
+                if "ghost_rules" in r:
+                    g_count = len(r["ghost_rules"].get("root_patterns", []))
+                    extras.append(f"幽灵规则: {g_count} 项")
+                extra_str = f" [{', '.join(extras)}]" if extras else ""
+                print(f"  {c('✔', Color.GREEN)} 规则 [{c(rid, Color.CYAN)}] 校验通过 (包含 {target_count} 处目标定义){c(extra_str, Color.DIM)}")
+        print(f"\n✨ 校验完毕: {valid_count}/{len(rules)} 条规则完全合规 (Rule Schema v1.2)。")
 
 def cmd_about():
     """打印详细的项目关于信息 (About Sea-Otter)"""
