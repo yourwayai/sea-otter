@@ -29,6 +29,9 @@ class TargetMatch:
     risk_level: str = RiskLevel.L2_ORPHAN.value
     model_name: Optional[str] = None
     model_format: Optional[str] = None
+    prunable: bool = False
+    sub_target_of: Optional[str] = None
+    regenerable: bool = True
 
 @dataclass
 class AIModelInspectionResult:
@@ -187,6 +190,19 @@ class AIModelScanner:
             if not model_format:
                 model_format = "ONNX"
 
+        # 针对 Cherry Studio 本地向量嵌入库与知识库
+        if ("cherrystudio" in normalized.lower() or "cherry studio" in normalized.lower()):
+            if "indexeddb" in normalized.lower():
+                if not model_name:
+                    model_name = "Vector Embeddings (IndexedDB)"
+                if not model_format:
+                    model_format = "IndexedDB Blob & LevelDB"
+            elif "knowledgebase" in normalized.lower():
+                if not model_name:
+                    model_name = "KnowledgeBase Documents"
+                if not model_format:
+                    model_format = "Vector Knowledge Base"
+
         detected_files = []
         total_weight_bytes = 0
         formats_seen = set()
@@ -239,15 +255,15 @@ class AIModelScanner:
                 detected_files=detected_files
             )
 
-        # 如果目录名为 OptGuideOnDeviceModel 但已被清空
-        if chrome_info:
+        # 如果目录命中了特定模型/向量库特征
+        if model_name:
             return AIModelInspectionResult(
                 is_model_weight=True,
-                model_name=chrome_info[0],
-                model_format=chrome_info[1],
-                total_weight_bytes=0,
-                model_files_count=0,
-                detected_files=[]
+                model_name=model_name,
+                model_format=model_format or "Vector Embeddings",
+                total_weight_bytes=total_weight_bytes,
+                model_files_count=len(detected_files) or 1,
+                detected_files=detected_files or [normalized]
             )
 
         return AIModelInspectionResult()
@@ -524,6 +540,9 @@ class RuleScanner:
                     else:
                         default_selected = False
 
+                    prunable = item.get("prunable", False)
+                    regenerable = item.get("regenerable", True)
+
                     t_match = TargetMatch(
                         category=cat_name,
                         raw_path=raw_path,
@@ -538,9 +557,60 @@ class RuleScanner:
                         safety_reason=reason,
                         risk_level=risk_lvl.value if isinstance(risk_lvl, RiskLevel) else str(risk_lvl),
                         model_name=detected_model_name,
-                        model_format=detected_model_format
+                        model_format=detected_model_format,
+                        prunable=prunable,
+                        regenerable=regenerable
                     )
                     targets.append(t_match)
+
+                    # 处理嵌套细粒度子项目 (sub_targets)
+                    sub_items = item.get("sub_targets", [])
+                    for sub in sub_items:
+                        sub_raw_path = sub.get("path", "")
+                        if not sub_raw_path:
+                            continue
+                        sub_expanded = normalize_path(sub_raw_path)
+                        sub_matched = glob.glob(sub_expanded)
+                        if not sub_matched and os.path.exists(sub_expanded):
+                            sub_matched = [sub_expanded]
+                        for sp in sub_matched:
+                            if not os.path.exists(sp):
+                                continue
+                            sp_size, sp_count = self._get_path_size_and_count(sp)
+                            sp_model_res = AIModelScanner.inspect_path(sp)
+                            sp_is_model = sub.get("is_model_weight", False) or cat_name == "ai_models" or sp_model_res.is_model_weight
+                            sp_model_name = sub.get("model_name") or sp_model_res.model_name
+                            sp_model_format = sub.get("model_format") or sp_model_res.model_format
+                            sp_secret = sub.get("contains_secrets", False)
+                            sp_declared_lvl = sub.get("risk_level")
+                            sp_risk_lvl, sp_safe, sp_reason = assess_risk_level(
+                                target_path=sp,
+                                software_status=preliminary_status,
+                                rule_safety=safety_config,
+                                is_model_weight=sp_is_model,
+                                contains_secrets=sp_secret,
+                                category=cat_name,
+                                declared_risk_level=sp_declared_lvl
+                            )
+                            targets.append(TargetMatch(
+                                category=cat_name,
+                                raw_path=sub_raw_path,
+                                resolved_path=sp,
+                                description=sub.get("description", ""),
+                                size_bytes=sp_size,
+                                file_count=sp_count,
+                                contains_secrets=sp_secret,
+                                is_model_weight=sp_is_model,
+                                default_selected=False,
+                                is_safe=sp_safe,
+                                safety_reason=sp_reason,
+                                risk_level=sp_risk_lvl.value if isinstance(sp_risk_lvl, RiskLevel) else str(sp_risk_lvl),
+                                model_name=sp_model_name,
+                                model_format=sp_model_format,
+                                prunable=sub.get("prunable", True),
+                                sub_target_of=p,
+                                regenerable=sub.get("regenerable", True)
+                            ))
 
         # 对命中的路径进行容量去重计算（如果父目录已被包含，不重复累加总大小）
         resolved_dirs = set()

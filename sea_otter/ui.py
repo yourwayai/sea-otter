@@ -132,4 +132,16 @@ def get_model_badge(is_model: bool, size_bytes: int = 0, model_name: Optional[st
     size_str = f" ({format_size(size_bytes)})" if size_bytes > 0 else ""
     return c(f" 🧠[本地模型权重{size_str}]", Color.BOLD, Color.BRIGHT_CYAN)
 
+def get_prunable_badge(is_prunable: bool, path: str = "", description: str = "") -> str:
+    """获取减负裁剪标识徽标 (会话大附件/运行时减负)"""
+    if not is_prunable:
+        return ""
+    lower_path = path.lower()
+    lower_desc = description.lower()
+    if "files" in lower_path or "attachment" in lower_desc or "附件" in lower_desc:
+        return c(" 📎[会话大附件]", Color.BOLD, Color.BRIGHT_MAGENTA)
+    if "toolchain" in lower_path:
+        return c(" 🛠️[运行时组件]", Color.BOLD, Color.CYAN)
+    return c(" ✂️[可减负]", Color.BOLD, Color.CYAN)
+
 

@@ -298,6 +298,88 @@ class TestCLIExecution(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertIn("Dry-run 只读模式", proc.stdout)
 
+    def test_cli_scan_slim_flag(self):
+        proc = subprocess.run(["sea-otter", "scan", "cherry-studio", "--slim", "--json"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0)
+        data = json.loads(proc.stdout)
+        self.assertIsInstance(data, list)
+        for tool in data:
+            for t in tool.get("targets", []):
+                self.assertNotIn(t.get("category"), ["credentials", "configs"])
+                self.assertFalse(any(t["path"].endswith(ext) for ext in [".sqlite", ".db", ".plist"]))
+
+    def test_cli_clean_slim_dry_run(self):
+        proc = subprocess.run(["sea-otter", "clean", "cherry-studio", "--slim", "--dry-run"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("安全减负模式", proc.stdout)
+        self.assertIn("Dry-run 只读模式", proc.stdout)
+
+
+class TestFineGrainedSlimming(unittest.TestCase):
+    """测试细粒度子项目分解与安全减负裁剪机制"""
+
+    def setUp(self):
+        self.scanner = RuleScanner()
+
+    def test_cherry_studio_rule_structure(self):
+        rules = self.scanner.load_rules(filter_ids=["cherry-studio"])
+        self.assertEqual(len(rules), 1)
+        r = rules[0]
+        targets = r.get("targets", {})
+        
+        # 验证包含本地向量库与附件细分项
+        self.assertIn("ai_models", targets)
+        self.assertIn("data_and_history", targets)
+        self.assertIn("caches", targets)
+
+        paths = [item["path"] for cat in targets.values() for item in cat]
+        self.assertTrue(any("IndexedDB" in p for p in paths), "必须收录 IndexedDB 向量嵌入库")
+        self.assertTrue(any("Data/Files" in p for p in paths), "必须收录 Data/Files 会话大附件")
+        self.assertTrue(any("Data/KnowledgeBase" in p for p in paths), "必须收录 KnowledgeBase 知识库向量索引")
+
+        # 验证核心数据库在排除名单中
+        exclude_paths = r.get("safety", {}).get("exclude_paths", [])
+        self.assertTrue(any("cherrystudio.sqlite" in ep for ep in exclude_paths), "核心会话 SQLite 必须在排除免疫名单中")
+        self.assertTrue(any("agents.db" in ep for ep in exclude_paths), "助手数据库必须在排除免疫名单中")
+
+    def test_sub_targets_expansion_in_scan(self):
+        dummy_rule = {
+            "id": "test-slim-tool",
+            "name": "Test Slim Tool",
+            "category": "desktop-agent",
+            "targets": {
+                "data_and_history": [
+                    {
+                        "path": "/dummy/parent",
+                        "description": "父目录",
+                        "sub_targets": [
+                            {
+                                "path": "/dummy/parent/attachments",
+                                "description": "会话大附件",
+                                "prunable": True
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            parent_dir = os.path.join(tmp_dir, "parent")
+            attach_dir = os.path.join(parent_dir, "attachments")
+            os.makedirs(attach_dir)
+            with open(os.path.join(attach_dir, "file.bin"), "wb") as f:
+                f.write(b"x" * 1024)
+
+            dummy_rule["targets"]["data_and_history"][0]["path"] = parent_dir
+            dummy_rule["targets"]["data_and_history"][0]["sub_targets"][0]["path"] = attach_dir
+
+            report = self.scanner.scan_tool(dummy_rule)
+            target_paths = [t.resolved_path for t in report.targets]
+            self.assertIn(attach_dir, target_paths, "子项目应被 scan_tool 递归解析")
+            attach_target = next(t for t in report.targets if t.resolved_path == attach_dir)
+            self.assertTrue(attach_target.prunable)
+            self.assertEqual(attach_target.sub_target_of, parent_dir)
+
 
 class TestAIModelScanner(unittest.TestCase):
     def test_model_file_extensions(self):

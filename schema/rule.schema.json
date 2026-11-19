@@ -178,6 +178,16 @@
           "type": "string",
           "enum": ["L1_SAFE", "L2_ORPHAN", "L3_IN_USE", "L4_DANGER"],
           "description": "Explicit risk level override for this target"
+        },
+        "prunable": {
+          "type": "boolean",
+          "default": false,
+          "description": "Flags whether this target can be pruned in safe slimming mode without damaging app configs or chat logs"
+        },
+        "sub_targets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/targetItem" },
+          "description": "Fine-grained sub-targets inside this target directory for precision pruning"
         }
       },
       "additionalProperties": false

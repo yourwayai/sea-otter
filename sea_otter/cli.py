@@ -12,7 +12,7 @@ from sea_otter.scanner import RuleScanner, ToolScanReport, TargetMatch
 from sea_otter.cleaner import SafeCleaner
 from sea_otter.safety import RiskLevel
 from sea_otter.ui import (
-    c, Color, format_size, print_banner, get_status_badge, get_risk_badge, get_model_badge, CATEGORY_NAMES
+    c, Color, format_size, print_banner, get_status_badge, get_risk_badge, get_model_badge, get_prunable_badge, CATEGORY_NAMES
 )
 
 def cmd_scan(args, scanner: RuleScanner):
@@ -24,9 +24,22 @@ def cmd_scan(args, scanner: RuleScanner):
     reports = scanner.scan_all(filter_ids=tools_filter)
 
     only_models = getattr(args, "models", False)
+    only_slim = getattr(args, "slim", False)
     if only_models:
         for r in reports:
             r.targets = [t for t in r.targets if t.is_model_weight or t.category == "ai_models"]
+            r.total_size_bytes = sum(t.size_bytes for t in r.targets)
+            r.model_weight_size_bytes = sum(t.size_bytes for t in r.targets if t.is_model_weight)
+    elif only_slim:
+        for r in reports:
+            r.targets = [
+                t for t in r.targets
+                if (t.prunable or t.is_model_weight or t.category in ["caches", "ai_models"]
+                    or "files" in t.resolved_path.lower() or "knowledgebase" in t.resolved_path.lower()
+                    or "indexeddb" in t.resolved_path.lower())
+                and t.category not in ["credentials", "configs"] and not t.contains_secrets
+                and not any(t.resolved_path.lower().endswith(ext) for ext in [".sqlite", ".sqlite3", ".db", ".plist"])
+            ]
             r.total_size_bytes = sum(t.size_bytes for t in r.targets)
             r.model_weight_size_bytes = sum(t.size_bytes for t in r.targets if t.is_model_weight)
 
@@ -57,6 +70,8 @@ def cmd_scan(args, scanner: RuleScanner):
                         "is_model_weight": t.is_model_weight,
                         "model_name": t.model_name,
                         "model_format": t.model_format,
+                        "prunable": t.prunable,
+                        "sub_target_of": t.sub_target_of,
                         "risk_level": t.risk_level,
                         "default_selected": t.default_selected,
                         "is_safe": t.is_safe,
@@ -116,9 +131,10 @@ def cmd_scan(args, scanner: RuleScanner):
                 risk_badge = get_risk_badge(t.risk_level)
                 secret_badge = c(" 🔑[敏感凭证]", Color.BOLD, Color.RED) if t.contains_secrets else ""
                 model_badge = get_model_badge(t.is_model_weight, t.size_bytes, t.model_name)
+                prune_badge = get_prunable_badge(t.prunable, t.resolved_path, t.description)
                 safety_badge = "" if t.is_safe else c(f" ⚠️[{t.safety_reason}]", Color.BOLD, Color.BRIGHT_RED)
                 
-                print(f"     • [{c(cat_desc, Color.MAGENTA)}] {risk_badge} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_badge}{model_badge}{safety_badge}")
+                print(f"     • [{c(cat_desc, Color.MAGENTA)}] {risk_badge} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_badge}{model_badge}{prune_badge}{safety_badge}")
                 if t.description:
                     desc_text = t.description
                     if t.model_name and t.model_name not in desc_text:
@@ -169,9 +185,15 @@ def cmd_clean(args, scanner: RuleScanner):
         categories_filter = [c.strip() for c in args.category.split(",") if c.strip()]
 
     only_models = getattr(args, "models", False)
+    slim_mode = getattr(args, "slim", False)
     include_l3 = getattr(args, "include_l3", False)
-    if only_models:
+    if only_models or slim_mode:
         include_l3 = True
+
+    if slim_mode:
+        print(c("✂️ [安全减负模式 (Slimming Mode)]：保留主配置与核心对话，专注释放会话大附件、过期向量嵌入库与各类缓存", Color.BOLD, Color.BRIGHT_MAGENTA))
+        print(c("🛡️ [安全保护屏障] 核心会话数据库 (cherrystudio.sqlite)、助手 Prompt 模板与 API 密钥已受到绝对保护。", Color.DIM))
+        print()
 
     # 筛选待清理目标
     candidates: List[TargetMatch] = []
@@ -189,12 +211,33 @@ def cmd_clean(args, scanner: RuleScanner):
             if only_models and not t.is_model_weight and t.category != "ai_models":
                 continue
 
+            # 专项安全减负模式过滤
+            if slim_mode:
+                # 排除敏感凭据与配置文件
+                if t.category in ["credentials", "configs"] or t.contains_secrets:
+                    continue
+                # 排除核心数据库文件
+                if any(t.resolved_path.lower().endswith(ext) for ext in [".sqlite", ".sqlite3", ".db", ".plist"]):
+                    continue
+                # 判定是否属于减负项 (纯缓存、本地模型/向量库、标记为 prunable 或会话附件/工具链)
+                is_slim = (
+                    t.prunable
+                    or t.is_model_weight
+                    or t.category in ["caches", "ai_models"]
+                    or "files" in t.resolved_path.lower()
+                    or "knowledgebase" in t.resolved_path.lower()
+                    or "indexeddb" in t.resolved_path.lower()
+                    or "toolchain" in t.resolved_path.lower()
+                )
+                if not is_slim:
+                    continue
+
             # 1. 绝对系统红线或被安全防线拦截的目标，绝对阻断 (L4: Protected System)
             if t.risk_level == RiskLevel.L4_DANGER.value or not t.is_safe:
                 skipped_unsafe_count += 1
                 continue
 
-            # 2. L3 (在用软件减负) 默认不勾选，需用户显式指定 --include-l3 (或使用 --models 专项参数)
+            # 2. L3 (在用软件减负) 默认不勾选，需用户显式指定 --include-l3 (或使用 --models / --slim 专项参数)
             if t.risk_level == RiskLevel.L3_IN_USE.value and not include_l3:
                 skipped_l3_count += 1
                 skipped_l3_bytes += t.size_bytes
@@ -211,7 +254,7 @@ def cmd_clean(args, scanner: RuleScanner):
         print(c("✨ 没有可清理的目标项！", Color.GREEN))
         if skipped_l3_count > 0:
             print(f"ℹ️ 检测到 {c(str(skipped_l3_count), Color.BOLD)} 处 L3 在用软件减负目标 (共 {c(format_size(skipped_l3_bytes), Color.YELLOW)})，默认已受保护未勾选。")
-            print(f"   如需深度清理正在使用的软件模型权重或缓存，请带上 {c('--include-l3', Color.CYAN)} 或 {c('--models', Color.CYAN)} 参数。")
+            print(f"   如需深度清理正在使用的软件模型权重或缓存，请带上 {c('--include-l3', Color.CYAN)}、{c('--models', Color.CYAN)} 或 {c('--slim', Color.CYAN)} 参数。")
         if skipped_secrets_count > 0:
             print(f"ℹ️ 检测到 {skipped_secrets_count} 处敏感凭证，默认已被跳过（如需清理请带上 {c('--include-secrets', Color.YELLOW)}）。")
         return
@@ -223,15 +266,18 @@ def cmd_clean(args, scanner: RuleScanner):
         secret_mark = c(" 🔑[敏感凭证]", Color.RED) if t.contains_secrets else ""
         risk_mark = get_risk_badge(t.risk_level)
         model_mark = f" {get_model_badge(t.is_model_weight, t.size_bytes, t.model_name)}" if (t.is_model_weight or t.category == "ai_models") else ""
-        print(f"  [{c(CATEGORY_NAMES.get(t.category, t.category), Color.MAGENTA)}] {risk_mark}{model_mark} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_mark}")
+        prune_mark = f" {get_prunable_badge(t.prunable, t.resolved_path, t.description)}" if (t.prunable and not t.is_model_weight) else ""
+        print(f"  [{c(CATEGORY_NAMES.get(t.category, t.category), Color.MAGENTA)}] {risk_mark}{model_mark}{prune_mark} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_mark}")
         if t.model_name:
-            print(f"    {c(f'🧠 模型名称: {t.model_name} (可独立修剪/不破坏宿主主配置)', Color.CYAN)}")
+            print(f"    {c(f'🧠 模型/向量库: {t.model_name} (可独立修剪/不破坏宿主主配置)', Color.CYAN)}")
         print(f"    {c(t.description, Color.DIM)}")
 
     print()
     print(f"预计释放空间: {c(format_size(candidate_size), Color.BOLD, Color.BRIGHT_GREEN)} (共 {len(candidates)} 项)")
-    if skipped_l3_count > 0:
-        print(c(f"ℹ️ 另有 {skipped_l3_count} 处 L3 在用减负项 ({format_size(skipped_l3_bytes)}) 默认未勾选保护 (加 --include-l3 可纳入)", Color.DIM))
+    if slim_mode:
+        print(c("🛡️ [减负模式生效] 核心会话数据库、助手预设及敏感凭据已全部安全保留。", Color.CYAN))
+    elif skipped_l3_count > 0:
+        print(c(f"ℹ️ 另有 {skipped_l3_count} 处 L3 在用减负项 ({format_size(skipped_l3_bytes)}) 默认未勾选保护 (加 --include-l3 或 --slim 可纳入)", Color.DIM))
 
 
     if args.dry_run:
@@ -376,14 +422,15 @@ def cmd_interactive_dashboard(scanner: RuleScanner):
     print(f"  {c('1', Color.BOLD, Color.BRIGHT_CYAN)}  🔍 全盘扫描体检 (输出 AI 工具安装状态与孤儿残留占用)")
     print(f"  {c('2', Color.BOLD, Color.BRIGHT_GREEN)}  🛡️ 安全清理预览 (Dry-run 模拟预览哪些文件会被移入废纸篓)")
     print(f"  {c('3', Color.BOLD, Color.BRIGHT_YELLOW)}  🧹 一键清理缓存 (安全清理所有纯缓存，移入废纸篓)")
-    print(f"  {c('4', Color.BOLD, Color.MAGENTA)}  📋 查看收录规则 (浏览当前收录的 {len(scanner.rules)} 款 AI 工具规则清单)")
-    print(f"  {c('5', Color.BOLD, Color.BRIGHT_BLUE)}  ℹ️ 关于项目理念 (了解 Sea-Otter 诞生背景与安全设计)")
-    print(f"  {c('6', Color.BOLD, Color.WHITE)}  🌐 访问官方仓库 (打开 GitHub 仓库主页)")
+    print(f"  {c('4', Color.BOLD, Color.BRIGHT_MAGENTA)}  ✂️ 智能安全减负 (Slim Mode - 释放会话大附件与向量库，保留对话与配置)")
+    print(f"  {c('5', Color.BOLD, Color.MAGENTA)}  📋 查看收录规则 (浏览当前收录的 {len(scanner.rules_dirs)} 个规则源中的规则)")
+    print(f"  {c('6', Color.BOLD, Color.BRIGHT_BLUE)}  ℹ️ 关于项目理念 (了解 Sea-Otter 诞生背景与安全设计)")
+    print(f"  {c('7', Color.BOLD, Color.WHITE)}  🌐 访问官方仓库 (打开 GitHub 仓库主页)")
     print(f"  {c('q', Color.DIM)}  🚪 退出程序")
     print()
 
     try:
-        choice = input(c("👉 请输入序号 [1-6 或 q]: ", Color.BOLD, Color.YELLOW)).strip().lower()
+        choice = input(c("👉 请输入序号 [1-7 或 q]: ", Color.BOLD, Color.YELLOW)).strip().lower()
     except (KeyboardInterrupt, EOFError):
         print("\n👋 已退出。")
         return
@@ -393,6 +440,8 @@ def cmd_interactive_dashboard(scanner: RuleScanner):
         class DummyArgs:
             tools = []
             show_all = False
+            models = False
+            slim = False
             json = False
         cmd_scan(DummyArgs(), scanner)
     elif choice == "2":
@@ -401,6 +450,9 @@ def cmd_interactive_dashboard(scanner: RuleScanner):
             category = None
             dry_run = True
             include_secrets = False
+            include_l3 = False
+            models = False
+            slim = False
             yes = False
         cmd_clean(DummyCleanArgs(), scanner)
     elif choice == "3":
@@ -409,15 +461,29 @@ def cmd_interactive_dashboard(scanner: RuleScanner):
             category = "caches"
             dry_run = False
             include_secrets = False
+            include_l3 = False
+            models = False
+            slim = False
             yes = False
         cmd_clean(DummyCleanCacheArgs(), scanner)
     elif choice == "4":
+        class DummySlimArgs:
+            tools = []
+            category = None
+            dry_run = False
+            include_secrets = False
+            include_l3 = True
+            models = False
+            slim = True
+            yes = False
+        cmd_clean(DummySlimArgs(), scanner)
+    elif choice == "5":
         class DummyRulesArgs:
             rule_action = "list"
         cmd_rules(DummyRulesArgs(), scanner)
-    elif choice == "5":
-        cmd_about()
     elif choice == "6":
+        cmd_about()
+    elif choice == "7":
         import webbrowser
         print(c("🚀 正在为您打开官方仓库: https://github.com/yourwayai/sea-otter", Color.CYAN))
         webbrowser.open("https://github.com/yourwayai/sea-otter")
@@ -428,6 +494,8 @@ def cmd_interactive_dashboard(scanner: RuleScanner):
         class DummyArgs:
             tools = []
             show_all = False
+            models = False
+            slim = False
             json = False
         cmd_scan(DummyArgs(), scanner)
 
@@ -445,6 +513,7 @@ def main():
     p_scan.add_argument("tools", nargs="*", help="指定要扫描的工具 ID (如 cursor, codex)，默认扫描全部")
     p_scan.add_argument("-a", "--all", dest="show_all", action="store_true", help="显示所有工具（包含未安装且无残留项）")
     p_scan.add_argument("-m", "--models", action="store_true", help="仅显示本地 AI 端侧模型与权重占用")
+    p_scan.add_argument("-s", "--slim", action="store_true", help="仅查看支持安全减负的目标项 (会话大附件、向量嵌入库、缓存)")
     p_scan.add_argument("--json", action="store_true", help="以 JSON 格式输出扫描结果")
 
     # clean
@@ -452,6 +521,7 @@ def main():
     p_clean.add_argument("tools", nargs="*", help="指定要清理的工具 ID (可选)")
     p_clean.add_argument("-c", "--category", help="按分类过滤 (如 caches,data_and_history)")
     p_clean.add_argument("-m", "--models", action="store_true", help="专项清理本地 AI 端侧大模型与权重文件 (保留应用主配置与在用数据)")
+    p_clean.add_argument("-s", "--slim", action="store_true", help="安全减负模式：保留主配置与核心对话，仅清理会话大附件、过期向量嵌入库与各类缓存")
     p_clean.add_argument("-n", "--dry-run", action="store_true", help="只读模式，仅预览待清理目标与空间，不进行实际移动")
     p_clean.add_argument("--include-l3", action="store_true", help="允许清理 L3 在用软件减负项 (如正在使用的端侧大模型、本地缓存)，默认安全跳过保护")
     p_clean.add_argument("--include-secrets", action="store_true", help="允许清理敏感凭证 (如 Token/API 密钥)，默认安全跳过")

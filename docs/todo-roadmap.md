@@ -1,17 +1,17 @@
 # Sea-Otter (DevSweep) 演进路线与待办清单 (Optimization Backlog)
 
 > **版本定位**：基于 [architecture-and-lessons-learned.md](architecture-and-lessons-learned.md) (v1.2 Milestone Release) 实战指南提炼，记录项目后续的迭代规划与具体待办项。  
-> **更新状态**：已完成前 2 项（四级安全防护矩阵、端侧大模型识别引擎），剩余 **10 项待办任务** 如下。
+> **更新状态**：已完成前 3 项（四级安全防护矩阵、端侧大模型识别引擎、本地会话与向量嵌入细粒度裁剪），剩余 **9 项待办任务** 如下。
 
 ---
 
 ## 📋 待办进度看板 (Kanban)
 
 ```
-[ 已完成 (2) ] ──────────> [ 进行中 (0) ] ──────────> [ 待开始 (10) ]
-• 四级安全矩阵 (L1~L4)                                 • P0 阶段: 2 项
+[ 已完成 (3) ] ──────────> [ 进行中 (0) ] ──────────> [ 待开始 (9) ]
+• 四级安全矩阵 (L1~L4)                                 • P0 阶段: 1 项
 • 端侧大模型引擎 (AIModelScanner)                      • P1 阶段: 4 项
-                                                       • P2 阶段: 4 项
+• 细粒度会话与向量裁剪 (Slim Mode)                     • P2 阶段: 4 项
 ```
 
 ---
@@ -34,15 +34,19 @@
 
 ---
 
-### [ ] Task 02: 本地会话库与向量嵌入细粒度裁剪模式
+### [x] Task 02: 本地会话库与向量嵌入细粒度裁剪模式
 * **痛点/价值**：Electron 类 AI 客户端（如 Cherry Studio）呈现“二进制附件 + 向量嵌入”双重膨胀，用户往往只想清理海量临时图片/PDF 会话附件（`Data/` 1.5GB）或过期的向量数据库（`IndexedDB/` 1.2GB），而希望保留助手 Prompt 预设与核心对话文本。
 * **涉及模块**：
-  * `rules/cherry-studio.yaml`
-  * `sea_otter/scanner.py`
-  * `sea_otter/cli.py`（支持细粒度子项勾选或按子目标裁剪）
-* **验收标准**：
-  1. 支持将单一工具的数据目录拆分为细粒度子项目；
-  2. 提供“保留配置与对话，仅清除会话大附件与过期嵌入向量库”的安全减负模式。
+  * `rules/cherry-studio.yaml` / `sea_otter/rules/cherry-studio.yaml`（将单一工作区细分拆解为会话大附件、向量嵌入库、知识库文档与渲染缓存）
+  * `sea_otter/scanner.py`（`TargetMatch` 扩充 `prunable`、`sub_target_of`、`regenerable` 属性，支持嵌套 `sub_targets` 递归解析与去重）
+  * `sea_otter/safety.py`（安全防线增强通配符排除检查，保护父目录不被误删）
+  * `sea_otter/ui.py`（新增 `get_prunable_badge` 标识 `📎[会话大附件]`、`🛠️[运行时组件]` 与 `✂️[可减负]`）
+  * `sea_otter/cli.py`（新增 `clean -s / --slim` 安全减负模式，自动放行 L3 减负项同时硬隔离核心数据库）
+  * `schema/rule.schema.json`（扩充 `prunable` 与 `sub_targets` 规范）
+* **验收结果**：
+  1. ✅ 将 Cherry Studio 单一目录成功拆分为 14 处细粒度子项，精准识别本机实机存在的 **1.3 GB 会话大附件** 与 **1.2 GB 向量数据库**（共释放 3.0 GB）；
+  2. ✅ 提供 `sea-otter clean --slim` 安全减负模式，仅清除附件、向量库与渲染缓存，100% 保留核心会话数据库（`cherrystudio.sqlite`）、助手 Prompt 模板与 API 密钥；
+  3. ✅ 单元测试全覆盖，验证规则结构、子项目解析与排除保护。
 
 ---
 

@@ -3,6 +3,17 @@ name: Cherry Studio
 category: desktop-agent
 vendor: KangTool
 homepage: https://cherry-ai.com
+
+# 活跃保护机制 (避免误删正在运行中的客户端进程)
+protection:
+  process_names:
+    - "Cherry Studio"
+    - "Cherry Studio Helper"
+    - "CherryStudio"
+  lock_files:
+    - ~/Library/Application Support/Cherry*Studio/SingletonLock
+    - ~/Library/Application Support/Cherry*Studio/SingletonSocket
+
 detection:
   app_bundle_id:
     - com.kangfenfei.cherry-studio
@@ -13,37 +24,125 @@ targets:
   credentials:
     - path: ~/.cherrystudio/config.json
       description: "多服务商 API Key 配置 (包含 OpenAI / Claude / DeepSeek 密钥)"
-      default_selected: true
+      default_selected: false
       contains_secrets: true
+      risk_level: L3_IN_USE
+
   configs:
     - path: ~/.cherrystudio
       description: "助手预设、Prompt 提示词模板与主配置"
       default_selected: false
+      risk_level: L3_IN_USE
+
+  ai_models:
+    - path: ~/Library/Application Support/Cherry*Studio/IndexedDB
+      description: "本地向量嵌入库与前端检索数据库 (Vector Embeddings & IndexedDB)"
+      is_model_weight: true
+      model_name: "Vector Embeddings (IndexedDB)"
+      model_format: "IndexedDB Blob & LevelDB"
+      regenerable: true
+      prunable: true
+      default_selected: false
+      risk_level: L3_IN_USE
+
+    - path: ~/Library/Application Support/Cherry*Studio/Data/KnowledgeBase
+      description: "本地知识库上传文档与向量切片索引缓存"
+      is_model_weight: true
+      model_name: "KnowledgeBase Documents"
+      regenerable: true
+      prunable: true
+      default_selected: false
+      risk_level: L3_IN_USE
+
   data_and_history:
-    - path: ~/Library/Application Support/Cherry Studio
-      description: "完整本地聊天记录、数据库与工作区存储"
-      default_selected: true
+    - path: ~/Library/Application Support/Cherry*Studio/Data/Files
+      description: "会话临时上传的图片、PDF与文档大附件 (二进制缓存)"
+      prunable: true
+      default_selected: false
+      risk_level: L3_IN_USE
+
+    - path: ~/Library/Application Support/Cherry*Studio/Toolchain
+      description: "扩展工具链与二进制运行时组件"
+      prunable: true
+      default_selected: false
+      risk_level: L3_IN_USE
+
     - path: ~/Library/Saved Application State/com.kangfenfei.cherry-studio.savedState
       description: "应用窗口恢复状态"
       default_selected: true
+      risk_level: L1_SAFE
+
   caches:
     - path: ~/Library/Caches/com.kangfenfei.cherry-studio
-      description: "系统级缓存"
+      description: "系统级临时缓存"
       default_selected: true
-    - path: ~/Library/Application Support/Cherry Studio/Cache
-      description: "客户端网络与图片缓存"
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Cherry*Studio/Cache
+      description: "客户端网络与图片下载缓存"
       default_selected: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Cherry*Studio/Code Cache
+      description: "V8 脚本编译与运行缓存"
+      default_selected: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Cherry*Studio/GPUCache
+      description: "GPU 着色器与渲染管线缓存"
+      default_selected: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Cherry*Studio/DawnGraphiteCache
+      description: "Dawn/Graphite 图形管线渲染缓存"
+      default_selected: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Cherry*Studio/DawnWebGPUCache
+      description: "Dawn WebGPU 运行时缓存"
+      default_selected: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Cherry*Studio/GraphiteDawnCache
+      description: "Graphite/Dawn 矢量渲染管线缓存"
+      default_selected: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Cherry*Studio/blob_storage
+      description: "临时 Blob 大对象缓冲区"
+      default_selected: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Cherry*Studio/Crashpad
+      description: "客户端崩溃日志与转储缓存"
+      default_selected: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Cherry*Studio/logs
+      description: "运行日志记录"
+      default_selected: true
+      risk_level: L1_SAFE
+
   preferences:
     - path: ~/Library/Preferences/com.kangfenfei.cherry-studio.plist
       description: "偏好设置"
       default_selected: true
+      risk_level: L3_IN_USE
+
     - path: ~/Library/Preferences/ByHost/com.kangfenfei.cherry-studio.ShipIt.*.plist
       description: "更新配置"
       default_selected: true
+      risk_level: L3_IN_USE
 
 safety:
   protect_git_repos: true
   exclude_paths:
+    - ~/Library/Application Support/Cherry*Studio/Data/cherrystudio.sqlite*
+    - ~/Library/Application Support/Cherry*Studio/Data/agents.db
+    - ~/Library/Application Support/Cherry*Studio/config.json
+    - ~/Library/Application Support/Cherry*Studio/Local Storage
+    - ~/Library/Application Support/Cherry*Studio/Preferences
+    - ~/.cherrystudio/config.json
     - ~/Documents
     - ~/Desktop
     - ~/Projects
