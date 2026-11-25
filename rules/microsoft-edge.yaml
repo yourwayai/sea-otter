@@ -82,6 +82,36 @@ targets:
       default_selected: true
       risk_level: L1_SAFE
 
+    - path: ~/Library/Caches/com.microsoft.edgemac
+      description: "Microsoft Edge macOS 系统级运行时缓存"
+      default_selected: true
+      prunable: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Caches/com.microsoft.EdgeUpdater
+      description: "Microsoft Edge 后台更新器离线包缓存"
+      default_selected: true
+      prunable: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Microsoft Edge/ShaderCache
+      description: "Microsoft Edge 着色器编译缓存"
+      default_selected: true
+      prunable: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Microsoft Edge/GrShaderCache
+      description: "Microsoft Edge Skia GPU 着色器缓存"
+      default_selected: true
+      prunable: true
+      risk_level: L1_SAFE
+
+  preferences:
+    - path: ~/Library/Preferences/com.microsoft.Edge.Dev.plist
+      description: "Microsoft Edge Dev 测试通道遗留偏好配置"
+      default_selected: true
+      risk_level: L2_ORPHAN
+
 safety:
   protect_git_repos: true
   protect_workspaces: true

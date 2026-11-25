@@ -503,7 +503,10 @@ class TestRuleSchemaV12(unittest.TestCase):
         self.rules = self.scanner.load_rules()
 
     def test_all_rules_pass_v12_validator(self):
-        self.assertGreaterEqual(len(self.rules), 15, "收录规则数量应不少于 15 款")
+        self.assertGreaterEqual(len(self.rules), 19, "收录规则数量应不少于 19 款")
+        loaded_ids = {r.get("id") for r in self.rules}
+        for expected_id in ["google-chrome", "microsoft-edge", "wechat-devtools", "lark-and-steam", "vscode"]:
+            self.assertIn(expected_id, loaded_ids, f"应收录高频规则 {expected_id}")
         for r in self.rules:
             is_valid, errors = validate_rule_schema_v12(r)
             self.assertTrue(is_valid, f"规则 [{r.get('id')}] 未通过 Schema v1.2 校验: {errors}")

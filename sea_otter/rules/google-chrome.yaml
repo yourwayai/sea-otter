@@ -77,6 +77,24 @@ targets:
       default_selected: true
       risk_level: L1_SAFE
 
+    - path: ~/Library/Caches/com.google.GoogleUpdater
+      description: "Google Chrome 后台静默更新器离线安装包缓存"
+      default_selected: true
+      prunable: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Google/Chrome/ShaderCache
+      description: "Chrome WebGL / ANGLE 着色器编译缓存"
+      default_selected: true
+      prunable: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Google/Chrome/GrShaderCache
+      description: "Chrome Skia GPU 图形着色器缓存"
+      default_selected: true
+      prunable: true
+      risk_level: L1_SAFE
+
 # 5. 根目录与幽灵项匹配 (Schema v1.2)
 ghost_rules:
   root_patterns:

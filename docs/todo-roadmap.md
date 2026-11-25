@@ -1,21 +1,22 @@
 # Sea-Otter (DevSweep) 演进路线与待办清单 (Optimization Backlog)
 
 > **版本定位**：基于 [architecture-and-lessons-learned.md](architecture-and-lessons-learned.md) (v1.2 Milestone Release) 实战指南提炼，记录项目后续的迭代规划与具体待办项。  
-> **更新状态**：已完成前 7 项（四级安全防护矩阵、端侧大模型识别引擎、本地会话与向量裁剪、Schema v1.2 规范与校验、根目录散落与幽灵探测引擎、多通道发布孤岛检测引擎、原子隔离区与一键无损回滚系统），**P0 阶段全部达成，P1 阶段即将收官**，剩余 **5 项待办任务** 如下。
+> **更新状态**：已完成前 8 项（四级安全防护矩阵、端侧大模型识别引擎、本地会话与向量裁剪、Schema v1.2 规范与校验、根目录散落与幽灵探测、多通道发布孤岛检测、原子隔离区与一键无损回滚、官方规则库第一轮扩充），**P0 与 P1 阶段全部圆满达成 🎉**，剩余 **4 项 P2 演进任务** 如下。
 
 ---
 
 ## 📋 待办进度看板 (Kanban)
 
 ```
-[ 已完成 (7) ] ──────────> [ 进行中 (0) ] ──────────> [ 待开始 (5) ]
+[ 已完成 (8) ] ──────────> [ 进行中 (0) ] ──────────> [ 待开始 (4) ]
 • 四级安全矩阵 (L1~L4)                                 • P0 阶段: 0 项 (全部达成!)
-• 端侧大模型引擎 (AIModelScanner)                      • P1 阶段: 1 项
+• 端侧大模型引擎 (AIModelScanner)                      • P1 阶段: 0 项 (全部达成!)
 • 细粒度会话与向量裁剪 (Slim Mode)                     • P2 阶段: 4 项
 • 规则 Schema v1.2 规范与校验 (Validator)
 • 根目录散落与幽灵探测 (RootOrphanScanner)
 • 多通道发布孤岛检测 (ChannelRedundancyScanner)
 • 原子隔离与无损回滚 (Quarantine & Rollback)
+• 官方规则库第一轮扩充 (Chrome/Edge/微信/飞书/VSCode)
 ```
 
 ---
@@ -114,16 +115,17 @@
 
 ---
 
-### [ ] Task 07: 官方规则库第一轮扩充 (Chrome / Edge / 微信开发者工具 / 飞书)
+### [x] Task 07: 官方规则库第一轮扩充 (Chrome / Edge / 微信开发者工具 / 飞书 & Steam / VS Code)
 * **痛点/价值**：将实战排查中发现的大头软件规则正式纳入官方仓库。
 * **涉及模块**：
-  * `rules/google-chrome.yaml`（端侧模型、组件缓存）
-  * `rules/microsoft-edge.yaml`（多通道分支）
-  * `rules/wechat-devtools.yaml`（微信 web 开发者工具模拟器与项目缓存）
-  * `rules/lark-and-steam.yaml`（飞书离线历史与 Steam 孤儿库）
-* **验收标准**：
-  1. 新增 4 款以上高频软件规则；
-  2. 经真机扫描验证，能识别出实机中的典型残留占用。
+  * `rules/google-chrome.yaml`（扩充端侧模型、GoogleUpdater 与着色器缓存）
+  * `rules/microsoft-edge.yaml`（新增 Edge 多通道分支、端侧语音/语言模型与 EdgeUpdater 缓存）
+  * `rules/wechat-devtools.yaml`（新增微信 web 开发者工具模拟器、编译产物与项目缓存）
+  * `rules/lark-and-steam.yaml`（新增飞书离线历史与 Steam 孤儿库，免疫游戏本体与存档）
+  * `rules/vscode.yaml`（新增 VS Code 多通道矩阵与工作区/更新缓存）
+* **验收结果**：
+  1. ✅ 新增并扩充 5 款高频软件规则，规则总数增至 19 款并全部通过 Schema v1.2 校验；
+  2. ✅ 经真机扫描验证，成功识别出本机 Chrome、Edge 与 VS Code 的真实残留与缓存占用。
 
 ---
 

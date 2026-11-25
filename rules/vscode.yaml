@@ -1,0 +1,103 @@
+id: vscode
+name: Visual Studio Code
+category: ide
+vendor: Microsoft
+homepage: https://code.visualstudio.com
+
+# 1. 活跃保护机制
+protection:
+  process_names:
+    - "Visual Studio Code"
+    - "Electron"
+  lock_files:
+    - ~/Library/Application Support/Code/SingletonLock
+    - ~/Library/Application Support/Code/SingletonSocket
+
+# 2. 安装状态检测
+detection:
+  app_bundle_id:
+    - com.microsoft.VSCode
+  app_paths:
+    - /Applications/Visual Studio Code.app
+  cli_binaries:
+    - /usr/local/bin/code
+
+# 3. 多通道分支定义 (Schema v1.2)
+channels:
+  current_channel: stable
+  related_channels:
+    - id: vscode-insiders
+      name: "Visual Studio Code - Insiders"
+      channel: insiders
+      data_path: ~/Library/Application Support/Code - Insiders
+      app_bundle_id: com.microsoft.VSCodeInsiders
+      app_path: /Applications/Visual Studio Code - Insiders.app
+
+# 4. 目标细分配置
+targets:
+  caches:
+    - path: ~/Library/Caches/com.microsoft.VSCode
+      description: "VS Code macOS 系统级缓存目录"
+      default_selected: true
+      prunable: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Caches/com.microsoft.VSCode.ShipIt
+      description: "VS Code 后台自动更新增量安装包缓存"
+      default_selected: true
+      prunable: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Code/Cache
+      description: "VS Code Electron 运行时缓存"
+      default_selected: true
+      prunable: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Code/CachedData
+      description: "VS Code V8 编译脚本字节码缓存"
+      default_selected: true
+      prunable: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Code/Code Cache
+      description: "VS Code Code Cache 缓存"
+      default_selected: true
+      prunable: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Code/GPUCache
+      description: "VS Code GPU 图形渲染缓存"
+      default_selected: true
+      prunable: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Code/logs
+      description: "VS Code 历史扩展宿主与渲染进程日志"
+      default_selected: true
+      prunable: true
+      risk_level: L1_SAFE
+
+  data_and_history:
+    - path: ~/Library/Application Support/Code/User/workspaceStorage
+      description: "VS Code 历史工作区索引与语言服务器状态缓存"
+      default_selected: false
+      prunable: true
+
+    - path: ~/Library/Saved Application State/com.microsoft.VSCode.savedState
+      description: "应用窗口恢复状态"
+      default_selected: true
+
+  configs:
+    - path: ~/Library/Application Support/Code/User/settings.json
+      description: "用户个人编辑器配置与快捷键映射"
+      default_selected: false
+
+safety:
+  protect_git_repos: true
+  protect_workspaces: true
+  exclude_paths:
+    - ~/Library/Application Support/Code/User/settings.json
+    - ~/Library/Application Support/Code/User/keybindings.json
+    - ~/Documents
+    - ~/Projects
