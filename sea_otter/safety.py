@@ -4,6 +4,7 @@
 """
 
 import os
+import re
 import glob
 import fnmatch
 from typing import Tuple, List, Optional
@@ -222,14 +223,15 @@ def assess_risk_level(
 
     # 4. L1 判定：极低风险项 (Bug 幽灵目录、历史散落单文件、死锁标记、骨架空目录)
     is_ghost_pattern = (
-        base_name in ["(null)", "null", "undefined"]
+        bool(re.match(r"^(\(null\)|undefined|null|none|\s+)$", base_name, re.IGNORECASE))
         or base_name.startswith(".ACCC_Lock")
         or base_name.startswith(".ADCS_Lock")
         or base_name.startswith("2052-TM")
+        or base_name.startswith("default.store")
         or category in ["ghost", "skeleton", "locks", "temp_images"]
     )
     if is_ghost_pattern:
-        return RiskLevel.L1_SAFE, True, "极低风险冗余 (代码Bug/散落锁/引导图，默认勾选)"
+        return RiskLevel.L1_SAFE, True, "极低风险冗余 (代码Bug/散落锁/引导图/骨架空目录，默认勾选)"
 
     # 5. L3 判定：在用软件减负 (端侧大模型、包含密钥凭证、或宿主软件仍在安装使用)
     if software_status == "installed":

@@ -1,0 +1,90 @@
+id: microsoft-edge
+name: Microsoft Edge
+category: browser
+vendor: Microsoft
+homepage: https://www.microsoft.com/edge
+
+# 1. 活跃保护机制 (避免误删正在运行中的浏览器)
+protection:
+  process_names:
+    - "Microsoft Edge"
+    - "Microsoft Edge Helper"
+  lock_files:
+    - ~/Library/Application Support/Microsoft Edge/SingletonLock
+    - ~/Library/Application Support/Microsoft Edge/SingletonSocket
+
+# 2. 安装状态检测
+detection:
+  app_bundle_id:
+    - com.microsoft.edgemac
+  app_paths:
+    - /Applications/Microsoft Edge.app
+
+# 3. 多通道分支定义 (Schema v1.2)
+channels:
+  current_channel: stable
+  related_channels:
+    - id: edge-canary
+      name: "Microsoft Edge Canary"
+      channel: canary
+      data_path: ~/Library/Application Support/Microsoft Edge Canary
+      app_bundle_id: com.microsoft.edgemac.Canary
+      app_path: /Applications/Microsoft Edge Canary.app
+    - id: edge-dev
+      name: "Microsoft Edge Dev"
+      channel: dev
+      data_path: ~/Library/Application Support/Microsoft Edge Dev
+      app_bundle_id: com.microsoft.edgemac.Dev
+      app_path: /Applications/Microsoft Edge Dev.app
+    - id: edge-beta
+      name: "Microsoft Edge Beta"
+      channel: beta
+      data_path: ~/Library/Application Support/Microsoft Edge Beta
+      app_bundle_id: com.microsoft.edgemac.Beta
+      app_path: /Applications/Microsoft Edge Beta.app
+
+# 4. 目标细分与端侧模型标注
+targets:
+  ai_models:
+    - path: ~/Library/Application Support/Microsoft Edge/EdgeOnDeviceSpeechModel
+      description: "Microsoft Edge 端侧离线语音识别模型"
+      is_model_weight: true
+      model_name: "Edge On-Device Speech"
+      model_format: "On-Device Weights"
+      regenerable: true
+      prunable: true
+      default_selected: false
+      risk_level: L3_IN_USE
+
+    - path: ~/Library/Application Support/Microsoft Edge/EdgeLanguageDetectionModel
+      description: "Microsoft Edge 端侧网页语言检测模型"
+      is_model_weight: true
+      model_name: "Edge Language Detection"
+      model_format: "TFLite / Weights"
+      regenerable: true
+      prunable: true
+      default_selected: false
+      risk_level: L3_IN_USE
+
+  caches:
+    - path: ~/Library/Caches/Microsoft Edge
+      description: "Microsoft Edge 网页、脚本与 GPU 渲染缓存"
+      default_selected: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Microsoft/EdgeUpdater
+      description: "Microsoft Edge 后台静默更新包与更新器缓存"
+      default_selected: true
+      risk_level: L1_SAFE
+
+    - path: ~/Library/Application Support/Microsoft Edge/component_crx_cache
+      description: "Edge 已安装扩展组件 CRX 缓存"
+      default_selected: true
+      risk_level: L1_SAFE
+
+safety:
+  protect_git_repos: true
+  protect_workspaces: true
+  exclude_paths:
+    - ~/Library/Application Support/Microsoft Edge/Default
+    - ~/Library/Application Support/Microsoft Edge/Profile *

@@ -34,6 +34,14 @@ channels:
       name: "Google Chrome Beta"
       channel: beta
       data_path: ~/Library/Application Support/Google/Chrome Beta
+      app_bundle_id: com.google.Chrome.beta
+      app_path: /Applications/Google Chrome Beta.app
+    - id: chrome-dev
+      name: "Google Chrome Dev"
+      channel: dev
+      data_path: ~/Library/Application Support/Google/Chrome Dev
+      app_bundle_id: com.google.Chrome.dev
+      app_path: /Applications/Google Chrome Dev.app
 
 # 4. 目标细分与端侧大模型专项标注
 targets:

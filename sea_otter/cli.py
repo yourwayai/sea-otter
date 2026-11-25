@@ -8,12 +8,13 @@ import json
 import argparse
 from typing import List, Optional
 
-from sea_otter.scanner import RuleScanner, ToolScanReport, TargetMatch
-from sea_otter.cleaner import SafeCleaner
+from sea_otter.scanner import RuleScanner, RootOrphanScanner, ChannelRedundancyScanner, ToolScanReport, TargetMatch
+from sea_otter.cleaner import SafeCleaner, QuarantineManager
 from sea_otter.safety import RiskLevel
 from sea_otter.validator import validate_rule_schema_v12
 from sea_otter.ui import (
-    c, Color, format_size, print_banner, get_status_badge, get_risk_badge, get_model_badge, get_prunable_badge, CATEGORY_NAMES
+    c, Color, format_size, print_banner, get_status_badge, get_risk_badge,
+    get_model_badge, get_prunable_badge, get_ghost_badge, get_channel_badge, CATEGORY_NAMES
 )
 
 def cmd_scan(args, scanner: RuleScanner):
@@ -22,14 +23,25 @@ def cmd_scan(args, scanner: RuleScanner):
         print_banner()
 
     tools_filter = args.tools if args.tools else None
-    reports = scanner.scan_all(filter_ids=tools_filter)
-
     only_models = getattr(args, "models", False)
     only_slim = getattr(args, "slim", False)
+    only_ghosts = getattr(args, "ghosts", False)
+    only_channels = getattr(args, "channels", False)
+
+    if only_ghosts and not tools_filter:
+        ghost_rules = [r for r in scanner.load_rules() if "ghost_rules" in r]
+        reports = [scanner.scan_tool(r) for r in ghost_rules]
+        reports.append(RootOrphanScanner().scan())
+    elif only_channels and not tools_filter:
+        all_rules = scanner.load_rules()
+        reports = [ChannelRedundancyScanner(rules=all_rules, use_builtin_defaults=True).scan()]
+    else:
+        reports = scanner.scan_all(filter_ids=tools_filter)
     if only_models:
         for r in reports:
             r.targets = [t for t in r.targets if t.is_model_weight or t.category == "ai_models"]
             r.total_size_bytes = sum(t.size_bytes for t in r.targets)
+            r.safe_size_bytes = sum(t.size_bytes for t in r.targets if t.is_safe)
             r.model_weight_size_bytes = sum(t.size_bytes for t in r.targets if t.is_model_weight)
     elif only_slim:
         for r in reports:
@@ -42,7 +54,23 @@ def cmd_scan(args, scanner: RuleScanner):
                 and not any(t.resolved_path.lower().endswith(ext) for ext in [".sqlite", ".sqlite3", ".db", ".plist"])
             ]
             r.total_size_bytes = sum(t.size_bytes for t in r.targets)
+            r.safe_size_bytes = sum(t.size_bytes for t in r.targets if t.is_safe)
             r.model_weight_size_bytes = sum(t.size_bytes for t in r.targets if t.is_model_weight)
+    elif only_ghosts:
+        for r in reports:
+            r.targets = [
+                t for t in r.targets
+                if t.ghost_type is not None or t.category in ["ghost", "skeleton", "locks", "temp_images"]
+            ]
+            r.total_size_bytes = sum(t.size_bytes for t in r.targets)
+            r.safe_size_bytes = sum(t.size_bytes for t in r.targets if t.is_safe)
+            r.model_weight_size_bytes = 0
+    elif only_channels:
+        for r in reports:
+            r.targets = [t for t in r.targets if t.channel_name is not None]
+            r.total_size_bytes = sum(t.size_bytes for t in r.targets)
+            r.safe_size_bytes = sum(t.size_bytes for t in r.targets if t.is_safe)
+            r.model_weight_size_bytes = 0
 
     if args.json:
         # JSON 格式输出，方便集成外部工具 (如 Raycast 插件)
@@ -73,6 +101,9 @@ def cmd_scan(args, scanner: RuleScanner):
                         "model_format": t.model_format,
                         "prunable": t.prunable,
                         "sub_target_of": t.sub_target_of,
+                        "ghost_type": t.ghost_type,
+                        "channel_name": t.channel_name,
+                        "inactive_days": t.inactive_days,
                         "risk_level": t.risk_level,
                         "default_selected": t.default_selected,
                         "is_safe": t.is_safe,
@@ -108,6 +139,10 @@ def cmd_scan(args, scanner: RuleScanner):
 
     if only_models:
         print(c("🧠 正在扫描系统中的本地端侧 AI 大模型与权重占用...", Color.BOLD, Color.BRIGHT_CYAN))
+    elif only_ghosts:
+        print(c("👻 正在扫描存储根目录散落文件、幽灵目录与骨架空目录...", Color.BOLD, Color.BRIGHT_GREEN))
+    elif only_channels:
+        print(c("🏝️ 正在执行浏览器与 IDE 多通道发布孤岛交叉检测 (Channel Cross-Check)...", Color.BOLD, Color.BRIGHT_YELLOW))
     else:
         print(c("🔍 正在扫描系统中的 AI 开发者工具与 Agent 残留...", Color.BOLD))
     print()
@@ -133,9 +168,11 @@ def cmd_scan(args, scanner: RuleScanner):
                 secret_badge = c(" 🔑[敏感凭证]", Color.BOLD, Color.RED) if t.contains_secrets else ""
                 model_badge = get_model_badge(t.is_model_weight, t.size_bytes, t.model_name)
                 prune_badge = get_prunable_badge(t.prunable, t.resolved_path, t.description)
+                ghost_badge = get_ghost_badge(t.ghost_type, t.category)
+                channel_badge = get_channel_badge(t.channel_name, t.inactive_days)
                 safety_badge = "" if t.is_safe else c(f" ⚠️[{t.safety_reason}]", Color.BOLD, Color.BRIGHT_RED)
                 
-                print(f"     • [{c(cat_desc, Color.MAGENTA)}] {risk_badge} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_badge}{model_badge}{prune_badge}{safety_badge}")
+                print(f"     • [{c(cat_desc, Color.MAGENTA)}] {risk_badge} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_badge}{model_badge}{prune_badge}{ghost_badge}{channel_badge}{safety_badge}")
                 if t.description:
                     desc_text = t.description
                     if t.model_name and t.model_name not in desc_text:
@@ -179,21 +216,38 @@ def cmd_clean(args, scanner: RuleScanner):
     print_banner()
 
     tools_filter = args.tools if args.tools else None
-    reports = scanner.scan_all(filter_ids=tools_filter)
+    only_models = getattr(args, "models", False)
+    slim_mode = getattr(args, "slim", False)
+    only_ghosts = getattr(args, "ghosts", False)
+    only_channels = getattr(args, "channels", False)
+
+    if only_ghosts and not tools_filter:
+        ghost_rules = [r for r in scanner.load_rules() if "ghost_rules" in r]
+        reports = [scanner.scan_tool(r) for r in ghost_rules]
+        reports.append(RootOrphanScanner().scan())
+    elif only_channels and not tools_filter:
+        all_rules = scanner.load_rules()
+        reports = [ChannelRedundancyScanner(rules=all_rules, use_builtin_defaults=True).scan()]
+    else:
+        reports = scanner.scan_all(filter_ids=tools_filter)
 
     categories_filter = None
     if args.category:
         categories_filter = [c.strip() for c in args.category.split(",") if c.strip()]
 
-    only_models = getattr(args, "models", False)
-    slim_mode = getattr(args, "slim", False)
     include_l3 = getattr(args, "include_l3", False)
-    if only_models or slim_mode:
+    if only_models or slim_mode or only_channels:
         include_l3 = True
 
     if slim_mode:
         print(c("✂️ [安全减负模式 (Slimming Mode)]：保留主配置与核心对话，专注释放会话大附件、过期向量嵌入库与各类缓存", Color.BOLD, Color.BRIGHT_MAGENTA))
         print(c("🛡️ [安全保护屏障] 核心会话数据库 (cherrystudio.sqlite)、助手 Prompt 模板与 API 密钥已受到绝对保护。", Color.DIM))
+        print()
+    elif only_ghosts:
+        print(c("👻 [根目录散落与幽灵清理模式]：专注清理 L1 极低风险的幽灵目录、散落引导图、过期死锁与骨架空目录", Color.BOLD, Color.BRIGHT_GREEN))
+        print()
+    elif only_channels:
+        print(c("🏝️ [多通道发布孤岛清理模式]：主通道活跃使用中，一键清理超过 90 天未启动的停用测试通道 (Canary/Dev/Beta)", Color.BOLD, Color.BRIGHT_YELLOW))
         print()
 
     # 筛选待清理目标
@@ -205,11 +259,23 @@ def cmd_clean(args, scanner: RuleScanner):
 
     for r in reports:
         for t in r.targets:
+            if not t.tool_id:
+                t.tool_id = r.tool_id
+            if not t.tool_name:
+                t.tool_name = r.name
             if categories_filter and t.category not in categories_filter:
                 continue
 
             # 专项模型过滤
             if only_models and not t.is_model_weight and t.category != "ai_models":
+                continue
+
+            # 专项幽灵/根目录散落过滤
+            if only_ghosts and t.ghost_type is None and t.category not in ["ghost", "skeleton", "locks", "temp_images"]:
+                continue
+
+            # 专项多通道测试孤岛过滤
+            if only_channels and t.channel_name is None:
                 continue
 
             # 专项安全减负模式过滤
@@ -258,6 +324,8 @@ def cmd_clean(args, scanner: RuleScanner):
             print(f"   如需深度清理正在使用的软件模型权重或缓存，请带上 {c('--include-l3', Color.CYAN)}、{c('--models', Color.CYAN)} 或 {c('--slim', Color.CYAN)} 参数。")
         if skipped_secrets_count > 0:
             print(f"ℹ️ 检测到 {skipped_secrets_count} 处敏感凭证，默认已被跳过（如需清理请带上 {c('--include-secrets', Color.YELLOW)}）。")
+        if args.dry_run:
+            print(c("🛡️ [Dry-run 只读模式] 模拟运行，未对文件系统做任何改动。", Color.BOLD, Color.CYAN))
         return
 
     candidate_size = sum(t.size_bytes for t in candidates)
@@ -268,7 +336,9 @@ def cmd_clean(args, scanner: RuleScanner):
         risk_mark = get_risk_badge(t.risk_level)
         model_mark = f" {get_model_badge(t.is_model_weight, t.size_bytes, t.model_name)}" if (t.is_model_weight or t.category == "ai_models") else ""
         prune_mark = f" {get_prunable_badge(t.prunable, t.resolved_path, t.description)}" if (t.prunable and not t.is_model_weight) else ""
-        print(f"  [{c(CATEGORY_NAMES.get(t.category, t.category), Color.MAGENTA)}] {risk_mark}{model_mark}{prune_mark} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_mark}")
+        ghost_mark = f" {get_ghost_badge(t.ghost_type, t.category)}" if (t.ghost_type or t.category in ["ghost", "skeleton", "locks", "temp_images"]) else ""
+        channel_mark = f" {get_channel_badge(t.channel_name, t.inactive_days)}" if t.channel_name else ""
+        print(f"  [{c(CATEGORY_NAMES.get(t.category, t.category), Color.MAGENTA)}] {risk_mark}{model_mark}{prune_mark}{ghost_mark}{channel_mark} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_mark}")
         if t.model_name:
             print(f"    {c(f'🧠 模型/向量库: {t.model_name} (可独立修剪/不破坏宿主主配置)', Color.CYAN)}")
         print(f"    {c(t.description, Color.DIM)}")
@@ -317,7 +387,135 @@ def cmd_clean(args, scanner: RuleScanner):
     print()
     print(c("═" * 68, Color.DIM))
     print(f"✨ {c('清理完成!', Color.BOLD, Color.GREEN)} 成功处理 {c(str(success_count), Color.BOLD)}/{len(candidates)} 项，已释放空间: {c(format_size(freed_size), Color.BOLD, Color.BRIGHT_GREEN)}")
-    print(f"{c('💡 提示:', Color.DIM)} 所有文件已移入系统废纸篓，可在废纸篓中随时“放回原处”。")
+    if cleaner.last_session_id and cleaner.last_quarantine_dir:
+        print(f"📦 {c('原子隔离会话:', Color.DIM)} {c(cleaner.last_session_id, Color.CYAN)} -> {c(cleaner.last_quarantine_dir, Color.DIM)}")
+        if cleaner.last_manifest_path:
+            print(f"📄 {c('回滚元数据清单:', Color.DIM)} {cleaner.last_manifest_path}")
+        print(f"{c('💡 提示:', Color.DIM)} 如需一键无损恢复，请执行 {c(f'sea-otter rollback {cleaner.last_session_id}', Color.CYAN)}。")
+    else:
+        print(f"{c('💡 提示:', Color.DIM)} 所有文件已移入系统废纸篓，可在废纸篓中随时“放回原处”。")
+
+
+def cmd_rollback(args):
+    """原子隔离区查看与一键无损回滚命令"""
+    use_json = getattr(args, "json", False)
+    if not use_json:
+        print_banner()
+
+    qm = QuarantineManager()
+    if getattr(args, "list_sessions", False):
+        sessions = qm.list_sessions()
+        if use_json:
+            print(json.dumps(sessions, indent=2, ensure_ascii=False))
+            return
+
+        if not sessions:
+            print(c("✨ 隔离区为空，暂无可回滚的历史清理会话。", Color.GREEN))
+            return
+
+        print(c(f"📦 隔离区共记录 {len(sessions)} 次历史清理会话 ({qm.base_dir}):\n", Color.BOLD))
+        for s in sessions:
+            sid = s.get("session_id", "unknown")
+            created_at = s.get("created_at", "")
+            status = s.get("status", "active")
+            items = s.get("items", [])
+            total_bytes = int(s.get("total_reclaimed_bytes", 0))
+            if status == "rolled_back":
+                status_str = c("[已全部回滚]", Color.DIM)
+            elif status == "partial":
+                status_str = c("[部分已回滚]", Color.YELLOW)
+            else:
+                status_str = c("[可无损恢复]", Color.BRIGHT_GREEN)
+            print(f"  • {c(sid, Color.BOLD, Color.CYAN)} {status_str} · {created_at} · {len(items)} 项 ({format_size(total_bytes)})")
+            apps = sorted({it.get("app_name", "Unknown") for it in items})
+            print(f"    {c('涉及工具:', Color.DIM)} {', '.join(apps[:5])}{' ...' if len(apps) > 5 else ''}")
+            print(f"    {c('隔离路径:', Color.DIM)} {s.get('quarantine_dir', '')}")
+        print(f"\n{c('💡 提示:', Color.DIM)} 执行 {c('sea-otter rollback <session_id>', Color.CYAN)}（或省略 ID 回滚最近一次）即可无损恢复。")
+        return
+
+    session_id = getattr(args, "session_id", None)
+    dry_run = getattr(args, "dry_run", False)
+    force = getattr(args, "force", False)
+    yes = getattr(args, "yes", False)
+
+    session = qm.find_session(session_id)
+    if session is None:
+        msg = f"未找到匹配的隔离会话: {session_id or 'latest'} (目录: {qm.base_dir})"
+        if use_json:
+            print(json.dumps({"success": False, "error": msg}, ensure_ascii=False))
+        else:
+            print(c(f"⚠️ {msg}", Color.YELLOW))
+            print(f"{c('💡 提示:', Color.DIM)} 执行 {c('sea-otter rollback --list', Color.CYAN)} 查看所有可用的历史隔离会话。")
+        return
+
+    items = session.get("items", [])
+    pending_items = [it for it in items if not it.get("rolled_back")]
+
+    if not use_json:
+        print(c(f"⏪ 准备无损回滚隔离会话: {session.get('session_id')}", Color.BOLD, Color.BRIGHT_CYAN))
+        print(f"   {c('创建时间:', Color.DIM)} {session.get('created_at', '')}")
+        print(f"   {c('隔离目录:', Color.DIM)} {session.get('quarantine_dir', '')}")
+        print(f"   {c('待恢复项:', Color.DIM)} {len(pending_items)}/{len(items)} 项")
+        for it in pending_items:
+            sz_str = format_size(int(it.get("size_bytes", 0)))
+            print(f"     • [{it.get('risk_level', 'L2_ORPHAN')}] {it.get('original_path')} {c(f'({sz_str})', Color.DIM)}")
+        print()
+
+    if not pending_items:
+        if use_json:
+            print(json.dumps({"success": True, "session_id": session.get("session_id"), "restored_count": 0, "message": "该会话中所有条目均已回滚"}, ensure_ascii=False))
+        else:
+            print(c("✨ 该会话中的所有条目均已恢复完毕，无需重复回滚。", Color.GREEN))
+        return
+
+    if not dry_run and not yes and not use_json:
+        confirm = input(f"确认将上述 {len(pending_items)} 项恢复至原路径吗？[y/N]: ").strip().lower()
+        if confirm not in ["y", "yes"]:
+            print(c("🚫 已取消回滚操作。", Color.YELLOW))
+            return
+
+    report = qm.rollback_session(session_id=session.get("session_id"), dry_run=dry_run, overwrite=force)
+
+    if use_json:
+        out = {
+            "success": report.failed_count == 0,
+            "session_id": report.session_id,
+            "quarantine_dir": report.quarantine_dir,
+            "manifest_path": report.manifest_path,
+            "is_dry_run": report.is_dry_run,
+            "restored_count": report.restored_count,
+            "restored_bytes": report.restored_bytes,
+            "failed_count": report.failed_count,
+            "results": [
+                {
+                    "name": r.name,
+                    "original_path": r.original_path,
+                    "quarantine_path": r.quarantine_path,
+                    "size_bytes": r.size_bytes,
+                    "success": r.success,
+                    "skipped": r.skipped,
+                    "message": r.message,
+                }
+                for r in report.results
+            ],
+        }
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+        return
+
+    for res in report.results:
+        if res.skipped:
+            print(f"  {c('-', Color.DIM)} {res.original_path} -> {c(res.message, Color.DIM)}")
+        elif res.success:
+            print(f"  {c('✔', Color.GREEN)} {res.original_path} -> {c(res.message, Color.DIM)}")
+        else:
+            print(f"  {c('✖', Color.RED)} {res.original_path} -> {c(res.message, Color.RED)}")
+
+    print()
+    if dry_run:
+        print(c("🛡️ [Dry-run 只读模式] 模拟回滚预览，未对文件系统做任何改动。", Color.BOLD, Color.CYAN))
+    else:
+        print(c("═" * 68, Color.DIM))
+        print(f"✨ {c('回滚完成!', Color.BOLD, Color.GREEN)} 成功恢复 {c(str(report.restored_count), Color.BOLD)} 项 ({format_size(report.restored_bytes)})。")
 
 def cmd_rules(args, scanner: RuleScanner):
     """规则管理命令"""
@@ -497,6 +695,8 @@ def main():
     p_scan.add_argument("-a", "--all", dest="show_all", action="store_true", help="显示所有工具（包含未安装且无残留项）")
     p_scan.add_argument("-m", "--models", action="store_true", help="仅显示本地 AI 端侧模型与权重占用")
     p_scan.add_argument("-s", "--slim", action="store_true", help="仅查看支持安全减负的目标项 (会话大附件、向量嵌入库、缓存)")
+    p_scan.add_argument("-g", "--ghosts", action="store_true", help="仅扫描根目录散落文件、幽灵目录与骨架空目录 (L1 极低风险)")
+    p_scan.add_argument("-C", "--channels", action="store_true", help="仅检测多通道发布孤岛 (如超过 90 天未用的 Canary/Dev/Beta 测试通道)")
     p_scan.add_argument("--json", action="store_true", help="以 JSON 格式输出扫描结果")
 
     # clean
@@ -505,11 +705,22 @@ def main():
     p_clean.add_argument("-c", "--category", help="按分类过滤 (如 caches,data_and_history)")
     p_clean.add_argument("-m", "--models", action="store_true", help="专项清理本地 AI 端侧大模型与权重文件 (保留应用主配置与在用数据)")
     p_clean.add_argument("-s", "--slim", action="store_true", help="安全减负模式：保留主配置与核心对话，仅清理会话大附件、过期向量嵌入库与各类缓存")
+    p_clean.add_argument("-g", "--ghosts", action="store_true", help="专项清理根目录散落文件、幽灵目录与骨架空目录 (L1 极低风险)")
+    p_clean.add_argument("-C", "--channels", action="store_true", help="专项清理停用超过 90 天的测试通道孤岛 (Canary/Dev/Beta)")
     p_clean.add_argument("-n", "--dry-run", action="store_true", help="只读模式，仅预览待清理目标与空间，不进行实际移动")
     p_clean.add_argument("--include-l3", action="store_true", help="允许清理 L3 在用软件减负项 (如正在使用的端侧大模型、本地缓存)，默认安全跳过保护")
     p_clean.add_argument("--include-secrets", action="store_true", help="允许清理敏感凭证 (如 Token/API 密钥)，默认安全跳过")
     p_clean.add_argument("-y", "--yes", action="store_true", help="无需交互确认，直接移入废纸篓")
 
+
+    # rollback
+    p_rollback = subparsers.add_parser("rollback", help="从 ~/.Trash 原子隔离区无损恢复已清理的文件/目录")
+    p_rollback.add_argument("session_id", nargs="?", help="指定隔离会话 ID（如 cleanup_20261125_114500），省略则默认最新会话")
+    p_rollback.add_argument("-l", "--list", dest="list_sessions", action="store_true", help="列出所有历史隔离会话")
+    p_rollback.add_argument("-n", "--dry-run", action="store_true", help="只读模式，仅预览恢复路径，不执行实际移动")
+    p_rollback.add_argument("-f", "--force", action="store_true", help="若原路径已有同名文件或目录，强制覆盖恢复")
+    p_rollback.add_argument("-y", "--yes", action="store_true", help="无需交互确认，直接恢复")
+    p_rollback.add_argument("--json", action="store_true", help="以 JSON 格式输出结果")
 
     # rules
     p_rules = subparsers.add_parser("rules", help="查看或校验内置规则库")
@@ -526,6 +737,8 @@ def main():
         cmd_scan(args, scanner)
     elif args.command == "clean":
         cmd_clean(args, scanner)
+    elif args.command == "rollback":
+        cmd_rollback(args)
     elif args.command == "rules":
         cmd_rules(args, scanner)
     elif args.command == "about":

@@ -99,6 +99,10 @@ CATEGORY_NAMES = {
     "data_and_history": "数据与会话 (Data/History)",
     "configs": "配置文件 (Configs)",
     "binaries_and_scripts": "CLI 二进制 (Binaries)",
+    "ghost": "幽灵目录 (Ghost Bug)",
+    "skeleton": "骨架空目录 (Skeleton Dir)",
+    "locks": "过期死锁 (Dead Lock)",
+    "temp_images": "散落引导图 (Scattered File)",
 }
 
 def get_status_badge(status: str) -> str:
@@ -143,5 +147,27 @@ def get_prunable_badge(is_prunable: bool, path: str = "", description: str = "")
     if "toolchain" in lower_path:
         return c(" 🛠️[运行时组件]", Color.BOLD, Color.CYAN)
     return c(" ✂️[可减负]", Color.BOLD, Color.CYAN)
+
+def get_ghost_badge(ghost_type: Optional[str] = None, category: str = "") -> str:
+    """获取根目录散落与幽灵异常高亮徽标"""
+    if not ghost_type and category not in ["ghost", "skeleton", "locks", "temp_images"]:
+        return ""
+    if ghost_type == "bug_name":
+        return c(" 👻[空指针幽灵]", Color.BOLD, Color.BRIGHT_GREEN)
+    if ghost_type == "dead_lock" or category == "locks":
+        return c(" 🔒[过期死锁标记]", Color.BOLD, Color.BRIGHT_GREEN)
+    if ghost_type == "scattered_file" or category == "temp_images":
+        return c(" 📄[根目录散落单文件]", Color.BOLD, Color.BRIGHT_GREEN)
+    if ghost_type == "skeleton_dir" or category == "skeleton":
+        return c(" 🦴[骨架空目录]", Color.BOLD, Color.BRIGHT_GREEN)
+    return c(" 👻[幽灵残留]", Color.BOLD, Color.BRIGHT_GREEN)
+
+def get_channel_badge(channel_name: Optional[str] = None, inactive_days: Optional[int] = None) -> str:
+    """获取多通道发布孤岛徽标 (Canary/Dev/Beta 停用测试通道)"""
+    if not channel_name:
+        return ""
+    days_part = f" {inactive_days}天未用" if inactive_days is not None else ""
+    return c(f" 🏝️[停用测试通道·{channel_name.upper()}{days_part}]", Color.BOLD, Color.BRIGHT_YELLOW)
+
 
 

@@ -1,18 +1,21 @@
 # Sea-Otter (DevSweep) 演进路线与待办清单 (Optimization Backlog)
 
 > **版本定位**：基于 [architecture-and-lessons-learned.md](architecture-and-lessons-learned.md) (v1.2 Milestone Release) 实战指南提炼，记录项目后续的迭代规划与具体待办项。  
-> **更新状态**：已完成前 4 项（四级安全防护矩阵、端侧大模型识别引擎、本地会话与向量裁剪、Schema v1.2 规范与校验），**P0 阶段全部圆满达成**，剩余 **8 项待办任务** 如下。
+> **更新状态**：已完成前 7 项（四级安全防护矩阵、端侧大模型识别引擎、本地会话与向量裁剪、Schema v1.2 规范与校验、根目录散落与幽灵探测引擎、多通道发布孤岛检测引擎、原子隔离区与一键无损回滚系统），**P0 阶段全部达成，P1 阶段即将收官**，剩余 **5 项待办任务** 如下。
 
 ---
 
 ## 📋 待办进度看板 (Kanban)
 
 ```
-[ 已完成 (4) ] ──────────> [ 进行中 (0) ] ──────────> [ 待开始 (8) ]
+[ 已完成 (7) ] ──────────> [ 进行中 (0) ] ──────────> [ 待开始 (5) ]
 • 四级安全矩阵 (L1~L4)                                 • P0 阶段: 0 项 (全部达成!)
-• 端侧大模型引擎 (AIModelScanner)                      • P1 阶段: 4 项
+• 端侧大模型引擎 (AIModelScanner)                      • P1 阶段: 1 项
 • 细粒度会话与向量裁剪 (Slim Mode)                     • P2 阶段: 4 项
 • 规则 Schema v1.2 规范与校验 (Validator)
+• 根目录散落与幽灵探测 (RootOrphanScanner)
+• 多通道发布孤岛检测 (ChannelRedundancyScanner)
+• 原子隔离与无损回滚 (Quarantine & Rollback)
 ```
 
 ---
@@ -69,39 +72,45 @@
 
 ## 阶段二：P1 扫描盲区穿透与原子无损回滚（系统级鲁棒性）
 
-### [ ] Task 04: 跨平台代码 Bug 与根目录散落探测引擎 (RootOrphanScanner)
+### [x] Task 04: 跨平台代码 Bug 与根目录散落探测引擎 (RootOrphanScanner)
 * **痛点/价值**：传统清理软件假设“软件一定会规矩地把文件写在二级子目录”。现实中，跨平台代码 Bug 经常在 `~/Library/Application Support/` 直属根节点生成 `(null)` 幽灵目录、10 年前解包的中文引导图（`2052-TM1000*.png`）、死锁标记（`.ACCC_Lock`）与骨架空目录（`ProApps`）。
 * **涉及模块**：
-  * `sea_otter/scanner.py`（新增根节点遍历与正则异常探测）
-  * `sea_otter/ui.py`
-* **验收标准**：
-  1. 准确正则捕获异常目录：`^(\(null\)|undefined|null|none|\s+)$`；
-  2. 捕获根节点散落的历史解包单文件与死锁标志；
-  3. 识别大小 `< 64KB` 且子孙项全空的骨架空目录（Skeleton Dirs）；
-  4. 归类至 **L1 极低风险**，支持一键安全清理。
+  * `sea_otter/scanner.py`（实现 `RootOrphanScanner` 与 `ghost_rules.root_patterns` 联动探测）
+  * `sea_otter/safety.py`（增强 `L1_SAFE` 幽灵/散落模式判定）
+  * `sea_otter/ui.py`（新增 `get_ghost_badge` 与幽灵/骨架/死锁/散落分类标签）
+  * `sea_otter/cli.py`（新增 `scan -g / --ghosts` 与 `clean -g / --ghosts` 专项模式）
+* **验收结果**：
+  1. ✅ 准确正则捕获异常目录：`^(\(null\)|undefined|null|none|\s+)$`（不区分大小写）；
+  2. ✅ 捕获根节点散落的历史解包单文件（`2052-TM*`）、CoreData 违规库（`default.store*`）与过期死锁标志（`.ACCC_Lock` / `.ADCS_Lock` / `*.lock`）；
+  3. ✅ 识别大小 `< 64KB` 且子孙项全空的骨架空目录（Skeleton Dirs），并内置 macOS 原生系统目录白名单防止误伤；
+  4. ✅ 全部归类至 **L1 极低风险**，支持 `sea-otter clean --ghosts` 一键安全隔离清理，单元测试全套通过。
 
 ---
 
-### [ ] Task 05: 浏览器与 IDE 多通道发布孤岛检测引擎 (ChannelRedundancyScanner)
+### [x] Task 05: 浏览器与 IDE 多通道发布孤岛检测引擎 (ChannelRedundancyScanner)
 * **痛点/价值**：开发者常并存安装前沿测试版（Canary / Dev / Beta）与正式版（Stable）。当用户已稳定在正式版时，测试通道往往长期滞留数百兆无用缓存。
 * **涉及模块**：
-  * `sea_otter/scanner.py`
-  * `rules/microsoft-edge.yaml` / `rules/google-chrome.yaml`
-* **验收标准**：
-  1. 自动关联产品家族通道矩阵（Edge / Edge Canary / Edge Dev；Chrome / Chrome Beta / Chrome Canary）；
-  2. 实现活跃度交叉仲裁（Channel Cross-Check）：当正式版高频使用，而测试通道超过 90 天未启动时，提示用户“一键清理停用的测试通道”。
+  * `sea_otter/scanner.py`（实现 `ChannelRedundancyScanner` 多通道矩阵合并与 90 天活跃度交叉仲裁）
+  * `rules/microsoft-edge.yaml` & `sea_otter/rules/microsoft-edge.yaml`（新增 Edge 全通道与端侧模型规则）
+  * `rules/google-chrome.yaml` & `sea_otter/rules/google-chrome.yaml`（补全 Canary / Beta / Dev 通道矩阵）
+  * `sea_otter/ui.py` & `sea_otter/cli.py`（新增 `🏝️[停用测试通道]` 徽标与 `scan/clean -C --channels` 模式）
+* **验收结果**：
+  1. ✅ 自动关联产品家族通道矩阵（Edge / Canary / Dev / Beta；Chrome / Canary / Beta / Dev；VS Code / Insiders）；
+  2. ✅ 实现活跃度交叉仲裁（Channel Cross-Check）：当正式版 30 天内活跃使用、测试通道超过 90 天未启动且未运行时，精准标记为停用测试通道孤岛并支持 `sea-otter clean --channels` 一键安全清理；
+  3. ✅ 实机验证成功捕获已卸载但滞留超过 9 个月的 `Google Chrome Beta` 数据孤岛，单元测试与规则校验全套通过。
 
 ---
 
-### [ ] Task 06: 原子隔离区与一键无损回滚系统 (`sea-otter rollback`)
+### [x] Task 06: 原子隔离区与一键无损回滚系统 (`sea-otter rollback`)
 * **痛点/价值**：直接调用系统删除操作即使放入废纸篓，在面对上百个散落文件时也很难定位和精准恢复。必须实现带元数据清单的原子归档。
 * **涉及模块**：
-  * `sea_otter/cleaner.py`（建立时间戳隔离区与 manifest）
-  * `sea_otter/cli.py`（新增 `rollback` 子命令）
-* **验收标准**：
-  1. 清理时在 `~/.Trash/AppSupport_Cleanup_<timestamp>/` 建立隔离目录；
-  2. 自动生成标准 `manifest.json`，完整记录原始绝对路径、时间戳、所属 App、大小与风险等级；
-  3. 执行 `sea-otter rollback [session_id]` 可逐条将隔离文件安全恢复至原路径。
+  * `sea_otter/cleaner.py`（实现 `QuarantineManager` 与 `SafeCleaner` 时间戳隔离归档、`manifest.json` 原子写入及防穿越回滚）
+  * `sea_otter/scanner.py`（`TargetMatch` 补充 `tool_id` / `tool_name` 归属元数据）
+  * `sea_otter/cli.py`（新增 `rollback [session_id]`、`--list`、`--dry-run`、`--force`、`-y` 与 `--json` 子命令）
+* **验收结果**：
+  1. ✅ 清理时自动在 `~/.Trash/AppSupport_Cleanup_<timestamp>/` 建立隔离目录（支持重名文件自动消歧）；
+  2. ✅ 自动生成标准 v1.2.0 `manifest.json`，完整记录原始绝对路径、时间戳、所属 App、大小与风险等级；
+  3. ✅ 执行 `sea-otter rollback [session_id]` 可逐条安全恢复至原路径，支持冲突保护、防越界校验与重复回滚跳过，单元测试全套通过。
 
 ---
 

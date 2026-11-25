@@ -11,9 +11,9 @@ import subprocess
 import json
 import yaml
 
-from sea_otter.scanner import RuleScanner, TargetMatch, AIModelScanner
-from sea_otter.safety import validate_target_safety, contains_workspace_or_repo, normalize_path
-from sea_otter.cleaner import SafeCleaner
+from sea_otter.scanner import RuleScanner, TargetMatch, AIModelScanner, RootOrphanScanner, ChannelRedundancyScanner
+from sea_otter.safety import validate_target_safety, contains_workspace_or_repo, normalize_path, RiskLevel
+from sea_otter.cleaner import SafeCleaner, QuarantineManager, QUARANTINE_DIR_PREFIX
 from sea_otter.validator import validate_rule_schema_v12
 
 
@@ -228,10 +228,12 @@ class TestSafeCleaner(unittest.TestCase):
 
             res = self.cleaner.clean_target(target, dry_run=False)
             self.assertTrue(res.success)
-            self.assertFalse(os.path.exists(home_test_file), "移入废纸篓后原路径文件应已不存在")
+            self.assertFalse(os.path.exists(home_test_file), "移入废纸篓/隔离区后原路径文件应已不存在")
         finally:
             if os.path.exists(home_test_file):
                 os.remove(home_test_file)
+            if self.cleaner.last_quarantine_dir and os.path.exists(self.cleaner.last_quarantine_dir):
+                shutil.rmtree(self.cleaner.last_quarantine_dir, ignore_errors=True)
 
     def test_l4_target_strictly_blocked(self):
         """测试 L4 绝对系统红线被 cleaner 强制拦截"""
@@ -314,6 +316,47 @@ class TestCLIExecution(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertIn("安全减负模式", proc.stdout)
         self.assertIn("Dry-run 只读模式", proc.stdout)
+
+    def test_cli_scan_ghosts_flag(self):
+        proc = subprocess.run(["sea-otter", "scan", "--ghosts", "--json"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0)
+        data = json.loads(proc.stdout)
+        self.assertIsInstance(data, list)
+        for tool in data:
+            for t in tool.get("targets", []):
+                self.assertTrue(
+                    t.get("ghost_type") is not None
+                    or t.get("category") in ["ghost", "skeleton", "locks", "temp_images"]
+                )
+                self.assertEqual(t.get("risk_level"), "L1_SAFE")
+
+    def test_cli_clean_ghosts_dry_run(self):
+        proc = subprocess.run(["sea-otter", "clean", "--ghosts", "--dry-run"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("根目录散落与幽灵清理模式", proc.stdout)
+        self.assertIn("Dry-run 只读模式", proc.stdout)
+
+    def test_cli_scan_channels_flag(self):
+        proc = subprocess.run(["sea-otter", "scan", "--channels", "--json"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0)
+        data = json.loads(proc.stdout)
+        self.assertIsInstance(data, list)
+        for tool in data:
+            for t in tool.get("targets", []):
+                self.assertIsNotNone(t.get("channel_name"))
+                self.assertGreaterEqual(t.get("inactive_days", 0), 90)
+
+    def test_cli_clean_channels_dry_run(self):
+        proc = subprocess.run(["sea-otter", "clean", "--channels", "--dry-run"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("多通道发布孤岛清理模式", proc.stdout)
+        self.assertIn("Dry-run 只读模式", proc.stdout)
+
+    def test_cli_rollback_list(self):
+        proc = subprocess.run(["sea-otter", "rollback", "--list", "--json"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0)
+        data = json.loads(proc.stdout)
+        self.assertIsInstance(data, list)
 
 
 class TestFineGrainedSlimming(unittest.TestCase):
@@ -554,6 +597,548 @@ class TestRuleSchemaV12(unittest.TestCase):
         is_valid, errors = validate_rule_schema_v12(invalid_regex_rule)
         self.assertFalse(is_valid)
         self.assertTrue(any("正则" in err for err in errors))
+
+
+class TestRootOrphanScanner(unittest.TestCase):
+    """测试 Task 04: 跨平台代码 Bug 与根目录散落探测引擎 (RootOrphanScanner)"""
+
+    def _make_root(self, tmp_dir: str) -> str:
+        # 使用深层路径避免触发根路径层级过浅保护 (<= 2 层)
+        root = os.path.join(tmp_dir, "Users", "tester", "Library", "Application Support")
+        os.makedirs(root, exist_ok=True)
+        return root
+
+    def test_abnormal_bug_names_detection(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = self._make_root(tmp_dir)
+            bug_names = ["(null)", "undefined", "null", "none", "   "]
+            for name in bug_names:
+                p = os.path.join(root, name)
+                os.makedirs(p)
+                with open(os.path.join(p, "orphan.dat"), "wb") as f:
+                    f.write(b"x" * 16)
+
+            report = RootOrphanScanner(roots=[root]).scan()
+            self.assertEqual(report.tool_id, "root-orphans")
+            self.assertEqual(report.status, "orphaned")
+            found_names = {os.path.basename(t.resolved_path) for t in report.targets}
+            self.assertEqual(found_names, set(bug_names))
+            for t in report.targets:
+                self.assertEqual(t.risk_level, RiskLevel.L1_SAFE.value)
+                self.assertTrue(t.is_safe)
+                self.assertTrue(t.default_selected)
+                self.assertEqual(t.ghost_type, "bug_name")
+                self.assertEqual(t.category, "ghost")
+
+    def test_scattered_files_and_dead_locks_detection(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = self._make_root(tmp_dir)
+            files = {
+                "2052-TM10002069.png": "scattered_file",
+                "default.store": "scattered_file",
+                ".ACCC_Lock": "dead_lock",
+                ".ADCS_Lock": "dead_lock",
+                "legacy.lock": "dead_lock",
+            }
+            for fname in files:
+                with open(os.path.join(root, fname), "wb") as f:
+                    f.write(b"dummy")
+
+            report = RootOrphanScanner(roots=[root]).scan()
+            by_name = {os.path.basename(t.resolved_path): t for t in report.targets}
+            self.assertEqual(set(by_name.keys()), set(files.keys()))
+            for fname, expected_type in files.items():
+                t = by_name[fname]
+                self.assertEqual(t.ghost_type, expected_type)
+                self.assertEqual(t.risk_level, RiskLevel.L1_SAFE.value)
+                self.assertTrue(t.is_safe)
+                self.assertTrue(t.default_selected)
+
+    def test_skeleton_empty_dirs_detection_and_boundaries(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = self._make_root(tmp_dir)
+
+            # 1. 纯空嵌套骨架目录 (< 64KB 且子孙全空) -> 应捕获
+            pro_apps = os.path.join(root, "ProApps", "Custom LUTs", "Presets")
+            os.makedirs(pro_apps)
+
+            # 2. 仅包含小体积 .DS_Store 的空骨架目录 -> 应捕获
+            finder_empty = os.path.join(root, "OldEmptyPlugin")
+            os.makedirs(os.path.join(finder_empty, "Sub"))
+            with open(os.path.join(finder_empty, ".DS_Store"), "wb") as f:
+                f.write(b"\x00" * 4096)
+
+            # 3. 含真实业务文件的正常目录 (即使体积很小) -> 不应被误判
+            real_app = os.path.join(root, "RealApp")
+            os.makedirs(real_app)
+            with open(os.path.join(real_app, "settings.json"), "w") as f:
+                f.write("{}")
+
+            # 4. 体积 >= 64KB 的目录 (即使仅有 .DS_Store) -> 不应被误判为骨架空目录
+            oversized_ds = os.path.join(root, "LargeMetadataDir")
+            os.makedirs(oversized_ds)
+            with open(os.path.join(oversized_ds, ".DS_Store"), "wb") as f:
+                f.write(b"\x00" * (65 * 1024))
+
+            # 5. 含有 .git 的空工作区目录 -> 强制免疫不捕获
+            git_ws = os.path.join(root, "UserRepo")
+            os.makedirs(os.path.join(git_ws, ".git"))
+
+            report = RootOrphanScanner(roots=[root]).scan()
+            found_names = {os.path.basename(t.resolved_path) for t in report.targets}
+            self.assertEqual(found_names, {"ProApps", "OldEmptyPlugin"})
+            for t in report.targets:
+                self.assertEqual(t.ghost_type, "skeleton_dir")
+                self.assertEqual(t.category, "skeleton")
+                self.assertEqual(t.risk_level, RiskLevel.L1_SAFE.value)
+                self.assertLess(t.size_bytes, RootOrphanScanner.SKELETON_MAX_BYTES)
+
+    def test_system_redline_and_native_dirs_never_flagged(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = self._make_root(tmp_dir)
+            for protected_name in [
+                "com.apple.TCC",
+                "com.apple.spotlight",
+                "AskPermission",
+                "CoreParsec",
+                "AddressBook",
+                "Preview",
+                "System Preferences",
+                "TrustedPeersHelper",
+                "accountsd",
+                ".DS_Store",
+                ".localized",
+            ]:
+                p = os.path.join(root, protected_name)
+                if protected_name in [".DS_Store", ".localized"]:
+                    with open(p, "wb") as f:
+                        f.write(b"")
+                else:
+                    os.makedirs(p)
+
+            report = RootOrphanScanner(roots=[root]).scan()
+            self.assertEqual(len(report.targets), 0, "系统红线与 macOS 原生空目录绝不应被判定为幽灵残留")
+            self.assertEqual(report.status, "clean")
+
+    def test_rule_ghost_patterns_evaluation(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            chrome_dir = os.path.join(tmp_dir, "Users", "tester", "Library", "Application Support", "Google", "Chrome")
+            os.makedirs(chrome_dir)
+            sock = os.path.join(chrome_dir, ".org.chromium.Chromium.XYZ123")
+            with open(sock, "wb") as f:
+                f.write(b"")
+
+            rule = {
+                "id": "mock-chrome",
+                "name": "Mock Chrome",
+                "category": "browser",
+                "targets": {"caches": [{"path": os.path.join(chrome_dir, "NonExistentCache"), "description": "cache"}]},
+                "ghost_rules": {
+                    "root_patterns": [
+                        {
+                            "regex": r"^\.org\.chromium\.Chromium\..*$",
+                            "description": "Chromium 临时残留套接字",
+                            "risk_level": "L1_SAFE",
+                            "target_roots": [chrome_dir],
+                        }
+                    ]
+                },
+            }
+            report = RuleScanner().scan_tool(rule)
+            self.assertEqual(len(report.targets), 1)
+            t = report.targets[0]
+            self.assertEqual(t.resolved_path, sock)
+            self.assertEqual(t.ghost_type, "rule_ghost")
+            self.assertEqual(t.risk_level, RiskLevel.L1_SAFE.value)
+            self.assertTrue(t.default_selected)
+
+    def test_l1_root_orphan_dry_run_and_clean(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = self._make_root(tmp_dir)
+            null_dir = os.path.join(root, "(null)")
+            os.makedirs(null_dir)
+            report = RootOrphanScanner(roots=[root]).scan()
+            self.assertEqual(len(report.targets), 1)
+
+            cleaner = SafeCleaner(use_trash=True)
+            dry_results = cleaner.clean_targets(report.targets, dry_run=True)
+            self.assertEqual(len(dry_results), 1)
+            self.assertTrue(dry_results[0].success)
+            self.assertTrue(os.path.exists(null_dir))
+
+
+class TestChannelRedundancyScanner(unittest.TestCase):
+    """测试 Task 05: 浏览器与 IDE 多通道发布孤岛检测引擎 (ChannelRedundancyScanner)"""
+
+    def _set_mtime(self, path: str, ts: float):
+        os.utime(path, (ts, ts))
+
+    def test_edge_and_chrome_rules_have_valid_channels(self):
+        scanner = RuleScanner()
+        rules = scanner.load_rules(filter_ids=["microsoft-edge", "google-chrome"])
+        self.assertEqual(len(rules), 2)
+        for r in rules:
+            is_valid, errors = validate_rule_schema_v12(r)
+            self.assertTrue(is_valid, f"{r['id']} 校验失败: {errors}")
+            self.assertIn("channels", r)
+            self.assertGreaterEqual(len(r["channels"]["related_channels"]), 2)
+
+    def test_channel_cross_check_detects_stale_orphan_and_installed(self):
+        now = 1_800_000_000.0
+        recent_ts = now - 2 * 86400        # 2 天前活跃
+        stale_120d_ts = now - 120 * 86400  # 120 天未启动 (> 90 天)
+        active_15d_ts = now - 15 * 86400   # 15 天前启动 (< 90 天，不应误报)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = os.path.join(tmp_dir, "Users", "tester", "Library", "Application Support")
+            cache_base = os.path.join(tmp_dir, "Users", "tester", "Library", "Caches")
+            stable_data = os.path.join(base, "Microsoft Edge")
+            canary_data = os.path.join(base, "Microsoft Edge Canary")
+            canary_cache = os.path.join(cache_base, "Microsoft Edge Canary")
+            dev_data = os.path.join(base, "Microsoft Edge Dev")
+            dev_app = os.path.join(tmp_dir, "Applications", "Microsoft Edge Dev.app")
+            beta_data = os.path.join(base, "Microsoft Edge Beta")
+
+            for d in [stable_data, canary_data, canary_cache, dev_data, dev_app, beta_data]:
+                os.makedirs(d, exist_ok=True)
+
+            # 写入占位文件并精确设定时间戳
+            stable_state = os.path.join(stable_data, "Local State")
+            with open(stable_state, "w") as f:
+                f.write("{}")
+            self._set_mtime(stable_state, recent_ts)
+            self._set_mtime(stable_data, recent_ts)
+
+            canary_file = os.path.join(canary_data, "History")
+            with open(canary_file, "wb") as f:
+                f.write(b"x" * 2048)
+            self._set_mtime(canary_file, stale_120d_ts)
+            self._set_mtime(canary_data, stale_120d_ts)
+
+            canary_cache_file = os.path.join(canary_cache, "cache.bin")
+            with open(canary_cache_file, "wb") as f:
+                f.write(b"c" * 4096)
+            self._set_mtime(canary_cache_file, stale_120d_ts)
+            self._set_mtime(canary_cache, stale_120d_ts)
+
+            dev_file = os.path.join(dev_data, "Preferences")
+            with open(dev_file, "w") as f:
+                f.write("{}")
+            self._set_mtime(dev_file, stale_120d_ts)
+            self._set_mtime(dev_data, stale_120d_ts)
+
+            beta_file = os.path.join(beta_data, "Preferences")
+            with open(beta_file, "w") as f:
+                f.write("{}")
+            self._set_mtime(beta_file, active_15d_ts)
+            self._set_mtime(beta_data, active_15d_ts)
+
+            mock_rule = {
+                "id": "microsoft-edge",
+                "name": "Microsoft Edge",
+                "category": "browser",
+                "protection": {"lock_files": [os.path.join(stable_data, "SingletonLock")]},
+                "channels": {
+                    "current_channel": "stable",
+                    "related_channels": [
+                        {
+                            "id": "edge-canary",
+                            "name": "Microsoft Edge Canary",
+                            "channel": "canary",
+                            "data_path": canary_data,
+                            "app_path": os.path.join(tmp_dir, "Applications", "NonExistent Canary.app"),
+                        },
+                        {
+                            "id": "edge-dev",
+                            "name": "Microsoft Edge Dev",
+                            "channel": "dev",
+                            "data_path": dev_data,
+                            "app_path": dev_app,
+                        },
+                        {
+                            "id": "edge-beta",
+                            "name": "Microsoft Edge Beta",
+                            "channel": "beta",
+                            "data_path": beta_data,
+                            "app_path": os.path.join(tmp_dir, "Applications", "NonExistent Beta.app"),
+                        },
+                    ],
+                },
+                "targets": {"caches": [{"path": canary_cache, "description": "cache"}]},
+            }
+
+            report = ChannelRedundancyScanner(rules=[mock_rule], now=now).scan()
+            self.assertEqual(report.tool_id, "channel-redundancy")
+            self.assertEqual(report.status, "orphaned")
+            by_path = {t.resolved_path: t for t in report.targets}
+
+            # Canary (.app 已卸载 + 120天未用) -> L2_ORPHAN + 伴随缓存
+            self.assertIn(canary_data, by_path)
+            self.assertIn(canary_cache, by_path)
+            self.assertEqual(by_path[canary_data].risk_level, RiskLevel.L2_ORPHAN.value)
+            self.assertTrue(by_path[canary_data].default_selected)
+            self.assertEqual(by_path[canary_data].channel_name, "canary")
+            self.assertEqual(by_path[canary_data].inactive_days, 120)
+
+            # Dev (.app 仍在 + 120天未用) -> L3_IN_USE (需确认或 --channels)
+            self.assertIn(dev_data, by_path)
+            self.assertEqual(by_path[dev_data].risk_level, RiskLevel.L3_IN_USE.value)
+            self.assertFalse(by_path[dev_data].default_selected)
+
+            # Beta (15天前用过) -> 不应被判定为孤岛
+            self.assertNotIn(beta_data, by_path)
+
+    def test_channel_cross_check_skips_when_stable_inactive_or_test_running(self):
+        now = 1_800_000_000.0
+        stale_ts = now - 120 * 86400
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = os.path.join(tmp_dir, "Users", "tester", "Library", "Application Support")
+            stable_data = os.path.join(base, "Google", "Chrome")
+            canary_data = os.path.join(base, "Google", "Chrome Canary")
+            os.makedirs(stable_data)
+            os.makedirs(canary_data)
+            self._set_mtime(stable_data, stale_ts)
+            self._set_mtime(canary_data, stale_ts)
+
+            mock_rule = {
+                "id": "google-chrome",
+                "name": "Google Chrome",
+                "category": "browser",
+                "protection": {"lock_files": [os.path.join(stable_data, "SingletonLock")]},
+                "channels": {
+                    "current_channel": "stable",
+                    "related_channels": [
+                        {"id": "chrome-canary", "name": "Chrome Canary", "channel": "canary", "data_path": canary_data}
+                    ],
+                },
+                "targets": {"caches": [{"path": canary_data, "description": "c"}]},
+            }
+
+            # 1. Stable 也超过 30 天未活跃 -> Cross-Check 不触发
+            report1 = ChannelRedundancyScanner(rules=[mock_rule], now=now).scan()
+            self.assertEqual(len(report1.targets), 0)
+
+            # 2. Stable 恢复活跃，但 Canary 持有 SingletonLock (正在运行) -> 保护跳过
+            self._set_mtime(stable_data, now - 86400)
+            with open(os.path.join(canary_data, "SingletonLock"), "w") as f:
+                f.write("lock")
+            self._set_mtime(canary_data, stale_ts)
+            report2 = ChannelRedundancyScanner(rules=[mock_rule], now=now).scan()
+            self.assertEqual(len(report2.targets), 0)
+
+
+class TestQuarantineRollback(unittest.TestCase):
+    """测试 Task 06: 原子隔离区与一键无损回滚系统 (Quarantine & Rollback)"""
+
+    def _make_workspace(self, tmp_dir: str):
+        app_support = os.path.join(tmp_dir, "Users", "tester", "Library", "Application Support")
+        trash_dir = os.path.join(tmp_dir, "Users", "tester", ".Trash")
+        os.makedirs(app_support, exist_ok=True)
+        os.makedirs(trash_dir, exist_ok=True)
+        return app_support, trash_dir
+
+    def test_quarantine_manifest_and_full_rollback(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            app_support, trash_dir = self._make_workspace(tmp_dir)
+
+            # 创建测试残留：Skype 目录、散落 png 文件、以及两个同名的 Cache 目录
+            skype_dir = os.path.join(app_support, "Skype")
+            os.makedirs(os.path.join(skype_dir, "Profile"))
+            with open(os.path.join(skype_dir, "Profile", "db.dat"), "wb") as f:
+                f.write(b"skype_data_123")
+
+            png_file = os.path.join(app_support, "2052-TM10002069.png")
+            with open(png_file, "wb") as f:
+                f.write(b"png_bytes")
+
+            cache_a = os.path.join(app_support, "AppA", "Cache")
+            cache_b = os.path.join(app_support, "AppB", "Cache")
+            os.makedirs(cache_a)
+            os.makedirs(cache_b)
+            with open(os.path.join(cache_a, "a.bin"), "wb") as f:
+                f.write(b"aaa")
+            with open(os.path.join(cache_b, "b.bin"), "wb") as f:
+                f.write(b"bbb")
+
+            targets = [
+                TargetMatch(
+                    category="data_and_history",
+                    raw_path=skype_dir,
+                    resolved_path=skype_dir,
+                    description="Skype 已卸载孤儿目录",
+                    size_bytes=14,
+                    file_count=1,
+                    contains_secrets=False,
+                    is_model_weight=False,
+                    default_selected=True,
+                    is_safe=True,
+                    safety_reason="孤儿残留",
+                    risk_level=RiskLevel.L2_ORPHAN.value,
+                    tool_id="skype",
+                    tool_name="Skype",
+                ),
+                TargetMatch(
+                    category="temp_images",
+                    raw_path=png_file,
+                    resolved_path=png_file,
+                    description="历史引导图",
+                    size_bytes=9,
+                    file_count=1,
+                    contains_secrets=False,
+                    is_model_weight=False,
+                    default_selected=True,
+                    is_safe=True,
+                    safety_reason="L1",
+                    risk_level=RiskLevel.L1_SAFE.value,
+                    tool_id="root-orphans",
+                    tool_name="Root Orphans",
+                ),
+                TargetMatch(
+                    category="caches",
+                    raw_path=cache_a,
+                    resolved_path=cache_a,
+                    description="AppA Cache",
+                    size_bytes=3,
+                    file_count=1,
+                    contains_secrets=False,
+                    is_model_weight=False,
+                    default_selected=True,
+                    is_safe=True,
+                    safety_reason="L2",
+                    risk_level=RiskLevel.L2_ORPHAN.value,
+                    tool_id="app-a",
+                    tool_name="AppA",
+                ),
+                TargetMatch(
+                    category="caches",
+                    raw_path=cache_b,
+                    resolved_path=cache_b,
+                    description="AppB Cache",
+                    size_bytes=3,
+                    file_count=1,
+                    contains_secrets=False,
+                    is_model_weight=False,
+                    default_selected=True,
+                    is_safe=True,
+                    safety_reason="L2",
+                    risk_level=RiskLevel.L2_ORPHAN.value,
+                    tool_id="app-b",
+                    tool_name="AppB",
+                ),
+            ]
+
+            cleaner = SafeCleaner(use_trash=True, use_quarantine=True, quarantine_base_dir=trash_dir)
+            results = cleaner.clean_targets(targets, dry_run=False)
+            self.assertTrue(all(r.success for r in results))
+            self.assertTrue(all(r.method_used == "quarantine" for r in results))
+            self.assertIsNotNone(cleaner.last_session_id)
+            self.assertIsNotNone(cleaner.last_quarantine_dir)
+            self.assertTrue(os.path.basename(cleaner.last_quarantine_dir).startswith(QUARANTINE_DIR_PREFIX))
+
+            # 原路径均已被移走
+            for p in [skype_dir, png_file, cache_a, cache_b]:
+                self.assertFalse(os.path.exists(p))
+
+            # 验证 manifest.json 结构与关键元数据
+            self.assertTrue(os.path.isfile(cleaner.last_manifest_path))
+            with open(cleaner.last_manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+
+            self.assertEqual(manifest["version"], "1.2.0")
+            self.assertEqual(manifest["session_id"], cleaner.last_session_id)
+            self.assertEqual(manifest["total_reclaimed_bytes"], 29)
+            self.assertEqual(manifest["status"], "active")
+            self.assertEqual(len(manifest["items"]), 4)
+            self.assertEqual(manifest["items"][0]["app_id"], "skype")
+            self.assertEqual(manifest["items"][0]["original_path"], skype_dir)
+            self.assertEqual(manifest["items"][0]["risk_level"], "L2_ORPHAN")
+            # 同名 Cache 目录应自动去重命名，互不覆盖
+            self.assertNotEqual(
+                manifest["items"][2]["target_relative_path"],
+                manifest["items"][3]["target_relative_path"],
+            )
+
+            qm = QuarantineManager(quarantine_base_dir=trash_dir)
+            sessions = qm.list_sessions()
+            self.assertEqual(len(sessions), 1)
+
+            # 1. Dry-run 回滚不改变文件状态
+            dry_rb = qm.rollback_session(cleaner.last_session_id, dry_run=True)
+            self.assertEqual(dry_rb.restored_count, 4)
+            self.assertFalse(os.path.exists(skype_dir))
+
+            # 2. 正式一键无损回滚 (省略 session_id 默认回滚最新会话)
+            rb = qm.rollback_session(dry_run=False)
+            self.assertEqual(rb.restored_count, 4)
+            self.assertEqual(rb.failed_count, 0)
+            self.assertTrue(os.path.isfile(os.path.join(skype_dir, "Profile", "db.dat")))
+            self.assertTrue(os.path.isfile(png_file))
+            with open(os.path.join(cache_a, "a.bin"), "rb") as f:
+                self.assertEqual(f.read(), b"aaa")
+            with open(os.path.join(cache_b, "b.bin"), "rb") as f:
+                self.assertEqual(f.read(), b"bbb")
+
+            # 3. 验证 manifest 已标记为 rolled_back，重复回滚会安全跳过
+            with open(cleaner.last_manifest_path, "r", encoding="utf-8") as f:
+                manifest_after = json.load(f)
+            self.assertEqual(manifest_after["status"], "rolled_back")
+            rb_again = qm.rollback_session(cleaner.last_session_id, dry_run=False)
+            self.assertEqual(rb_again.restored_count, 0)
+            self.assertTrue(all(r.skipped for r in rb_again.results))
+
+    def test_rollback_conflict_and_path_traversal_guard(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            app_support, trash_dir = self._make_workspace(tmp_dir)
+            target_file = os.path.join(app_support, "conflict.log")
+            with open(target_file, "w") as f:
+                f.write("original_content")
+
+            target = TargetMatch(
+                category="caches",
+                raw_path=target_file,
+                resolved_path=target_file,
+                description="日志",
+                size_bytes=16,
+                file_count=1,
+                contains_secrets=False,
+                is_model_weight=False,
+                default_selected=True,
+                is_safe=True,
+                safety_reason="L1",
+                risk_level=RiskLevel.L1_SAFE.value,
+                tool_id="test",
+                tool_name="Test",
+            )
+            cleaner = SafeCleaner(use_trash=True, use_quarantine=True, quarantine_base_dir=trash_dir)
+            cleaner.clean_targets([target], dry_run=False)
+
+            # 原路径出现新建同名文件 -> 默认不覆盖
+            with open(target_file, "w") as f:
+                f.write("new_file")
+
+            qm = QuarantineManager(quarantine_base_dir=trash_dir)
+            rb_conflict = qm.rollback_session(cleaner.last_session_id, overwrite=False)
+            self.assertEqual(rb_conflict.failed_count, 1)
+            self.assertIn("已存在同名", rb_conflict.results[0].message)
+            with open(target_file, "r") as f:
+                self.assertEqual(f.read(), "new_file")
+
+            # 使用 overwrite=True 强制恢复
+            rb_force = qm.rollback_session(cleaner.last_session_id, overwrite=True)
+            self.assertEqual(rb_force.restored_count, 1)
+            with open(target_file, "r") as f:
+                self.assertEqual(f.read(), "original_content")
+
+            # 路径穿越防护校验
+            with open(cleaner.last_manifest_path, "r", encoding="utf-8") as f:
+                m = json.load(f)
+            m["items"][0]["rolled_back"] = False
+            m["items"][0]["target_relative_path"] = "../../etc/passwd"
+            qm.write_manifest(cleaner.last_quarantine_dir, m)
+            rb_traversal = qm.rollback_session(cleaner.last_session_id)
+            self.assertEqual(rb_traversal.failed_count, 1)
+            self.assertIn("越界", rb_traversal.results[0].message)
 
 
 if __name__ == "__main__":
