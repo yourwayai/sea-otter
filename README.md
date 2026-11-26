@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/yourwayai/sea-otter/releases"><img src="https://img.shields.io/badge/version-1.0.0-blue.svg" alt="Version"></a>
+  <a href="https://github.com/yourwayai/sea-otter"><img src="https://img.shields.io/badge/schema-v1.2-purple.svg" alt="Rule Schema v1.2"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License"></a>
   <a href="README_EN.md"><img src="https://img.shields.io/badge/docs-English-blue.svg" alt="English Documentation"></a>
 </p>
@@ -19,11 +20,23 @@
 
 ## 🌟 为什么需要 Sea-Otter？
 
-传统清理工具（如 CleanMyMac、AppCleaner）通常采用“以 App Bundle 为中心”的粗放匹配模式，主要扫描 `~/Library` 下的 Bundle ID 文件夹。这在面对现代 AI 编程助手与 Agent CLI（如 Claude Code, Codex, Alma, WorkBuddy, Antigravity, Kiro 等）时往往失效：
-- **遗漏核心 Dotfiles**：大量数据分散在 `~/.claude`, `~/.codex`, `~/.gemini`, `~/.workbuddy` 等家目录隐藏文件夹中。
-- **孤儿残留识别盲区**：软件已被拖入废纸篓删除，但残留的会话历史、向量数据库、CLI 软链接和 OAuth Token 依然长期霸占空间。
-- **敏感数据泄露风险**：Token / Refresh Token / OAuth 凭证与代码缓存混杂，缺乏敏感度分级。
-- **误伤开发者资产**：AI Agent 经常直接在用户目录下创建工作区，缺乏对 `.git` 项目的安全防线。
+传统清理工具（如 CleanMyMac、AppCleaner）通常采用“以 App Bundle 为中心”的粗放匹配模式，主要扫描 `~/Library` 下的 Bundle ID 文件夹。这在面对现代 AI 编程助手、端侧大模型与 Agent CLI（如 Claude Code, Codex, Cherry Studio, Alma, WorkBuddy, Antigravity, Kiro 等）时往往失效：
+
+- **遗漏核心 Dotfiles**：大量配置与会话库分散在 `~/.claude`, `~/.codex`, `~/.gemini`, `~/.ollama` 等家目录隐藏文件夹中。
+- **端侧大模型与向量库透明**：Chrome 会静默拉取 **4.0 GB Gemini Nano** (`OptGuideOnDeviceModel`)，AI 客户端堆积数 GB 会话附件与 `IndexedDB` 向量库，传统工具对其完全失明。
+- **根目录散落与测试通道孤岛**：跨平台代码 Bug 会在 `~/Library/Application Support/` 根节点生成 `(null)`、`default.store`、`.ACCC_Lock` 或空骨架目录；长期停用的 Canary/Dev/Beta 测试通道滞留大量无用缓存。
+- **孤儿残留与敏感凭证混杂**：软件卸载后残留的 SQLite 会话库、OAuth Token、Refresh Token 与代码缓存混杂，缺乏敏感度分级与可恢复机制。
+- **误伤开发者资产**：AI Agent 常直接创建工程目录，缺乏对 `.git` / `.obsidian` 工作区的强制免疫防线。
+
+---
+
+## ✨ 核心能力 (v1.2 Architecture)
+
+- 🧠 **端侧大模型专项引擎 (`AIModelScanner`)**：支持 `.gguf`、`.safetensors`、`.onnx`、`.bin`、`.pt`、`.pth`、`GGUF` Magic Header 与 Chrome Optimization Guide (`Gemini Nano`) 识别，支持 `scan/clean --models` 独立修剪而不破坏宿主配置。
+- ✂️ **细粒度会话与向量裁剪 (`--slim`)**：支持 `sub_targets` 递归拆解与 `prunable` 标识，精准清理会话大附件（`Data/Files`）与向量嵌入库（`IndexedDB`），100% 免疫核心数据库（如 `cherrystudio.sqlite`）与助手配置。
+- 👻 **根目录散落与幽灵探测 (`RootOrphanScanner`, `--ghosts`)**：直击存储根节点，自动捕获 `^(\(null\)|undefined|null|none|\s+)$` 异常目录、历史解包单图（`2052-TM*`）、CoreData 违规库（`default.store*`）、死锁标记（`.ACCC_Lock`/`.ADCS_Lock`）与 `< 64KB` 骨架空目录。
+- 🏝️ **多通道发布孤岛交叉检测 (`ChannelRedundancyScanner`, `--channels`)**：自动关联 Chrome / Edge / VS Code 家族矩阵，当正式版近期高频活跃而测试通道（Canary / Dev / Beta / Insiders）超过 **90 天**未启动时，提示一键安全清理。
+- ⏪ **原子隔离区与一键无损回滚 (`sea-otter rollback`)**：清理时自动在 `~/.Trash/AppSupport_Cleanup_<timestamp>/` 建立隔离目录并生成标准 `manifest.json`（v1.2.0），支持重名消歧、冲突保护与按会话一键无损恢复。
 
 ---
 
@@ -33,21 +46,21 @@
 
 | 级别 | 定义 | 典型对象 | 处理与勾选策略 |
 | :--- | :--- | :--- | :--- |
-| **🟢 L1: 极低风险 (Zero-Impact Junk)** | 纯垃圾文件、空锁、跨平台 Bug 目录 | 历史散落图片、`.ACCC_Lock`、`(null)` 幽灵目录、空骨架目录 | **默认勾选**，一键归档移入废纸篓 |
-| **🟡 L2: 明确已卸载 (Orphaned Apps)** | 对应软件已删除，残留孤儿历史配置 | `Codex`、`Cursor`、`Claude`、`Trae` 等已卸载孤岛 | **默认勾选**，移入废纸篓隔离区 |
-| **🟠 L3: 在用软件减负 (Bloatware/Cache)** | 正在使用的软件，但内部堆积了模型/临时缓存/凭据 | 正在使用的软件缓存、本地模型权重（Ollama/BGE）、OAuth 密钥 | **默认不勾选**，需加 `--include-l3` 显式确认 |
+| **🟢 L1: 极低风险 (Zero-Impact Junk)** | 纯垃圾文件、空锁、跨平台 Bug 目录、纯缓存 | `(null)` 幽灵目录、`default.store`、`.ACCC_Lock`、骨架空目录、Chrome/Edge 纯缓存 | **默认勾选**，一键归档隔离 |
+| **🟡 L2: 明确已卸载 (Orphaned Apps)** | 对应软件已删除，残留孤儿历史配置/旧测试通道 | 已卸载的 `Codex`、`Cursor`、`Chrome Beta` 测试通道孤岛等 | **默认勾选**，移入原子隔离区 |
+| **🟠 L3: 在用软件减负 (Bloatware/Cache)** | 正在使用的软件，但内部堆积了模型/大附件/缓存 | Chrome 端侧模型 (4GB)、Cherry Studio 附件/向量库、在用软件缓存 | **默认不勾选**，需 `--include-l3` 或 `--models`/`--slim`/`--channels` 确认 |
 | **🔴 L4: 绝对安全红线 (Protected System)** | macOS 系统核心数据、权限库、代码工程、活跃进程 | `com.apple.TCC`、`AddressBook`、`CloudDocs`、`.git` 仓库、运行中的进程 | **硬编码屏蔽阻断**，完全禁止删除 |
 
 ### 四大绝对安全铁律
 
 1. **系统红线库 (System Redline Vault) 强阻断**：
-   - 对 `com.apple.TCC` (麦克风/摄像头/完全磁盘访问权限库)、`AddressBook`、`CallHistoryDB`、`CloudDocs`、`Keychain`、`com.apple.sharedfilelist` 等系统关键库设立绝对硬白名单，禁止任何触碰。
+   - 对 `com.apple.TCC`、`AddressBook`、`CallHistoryDB`、`CloudDocs`、`Keychain`、`com.apple.sharedfilelist`、`Safari`、`Mail`、`Photos` 等系统关键库，以及 macOS 原生系统目录设立绝对硬白名单，禁止任何触碰。
 2. **多维存活状态交叉验证 (Process & Lock Guard)**：
-   - 判定软件是否在用绝不仅看 `/Applications/*.app`，而是交叉比对进程表（`pgrep`）、常驻守护进程与单例文件锁（`SingletonLock`）。活跃工具自动上锁标记为 **`🔵 正在运行 (保护锁定)`**。
+   - 判定软件是否在用绝不仅看 `/Applications/*.app`，而是交叉比对系统进程表（`pgrep`）、常驻守护进程与单例文件锁（`SingletonLock`）。活跃工具自动上锁标记为 **`🔵 正在运行 (保护锁定)`**。
 3. **代码仓库与工程资产“强制免疫”**：
-   - 任何待清理路径自动浅层递归探测 `.git`、`.svn`、`.hg`、`.obsidian` 标识。只要检测到代码仓库，**强制阻断一键清理，将其归类为用户工程资产**。
-4. **废纸篓软着陆隔离与敏感凭据审计**：
-   - 默认采用系统原生 Trash 移入机制，零误删心理负担；明文 OAuth Token 和私钥自动打上 🔑 告警标并默认跳过。
+   - 任何待清理路径自动探测 `.git`、`.svn`、`.hg`、`.obsidian` 标识及规则中的 `exclude_paths`（含通配符内部文件校验）。只要检测到工程资产，**强制阻断清理**。
+4. **原子隔离归档与敏感凭据审计**：
+   - 清理默认归档至 `~/.Trash/AppSupport_Cleanup_<timestamp>/` 并附带 `manifest.json`，随时执行 `sea-otter rollback` 无损还原；明文 OAuth Token 和私钥自动打上 🔑 告警标并默认跳过。
 
 ---
 
@@ -58,36 +71,45 @@ sea-otter/
 ├── assets/                      # 项目资源（Logo 图标等）
 │   └── logo.png
 ├── schema/
-│   └── rule.schema.json         # 规则库 JSON Schema 规范 (v1.1)
-├── rules/                       # 各大 AI/开发者工具精细化指纹规则 (YAML)
+│   └── rule.schema.json         # 规则库 JSON Schema 规范 (v1.2)
+├── rules/                       # 19 款主流 AI 工具与开发者生态指纹规则 (YAML)
 │   ├── 5ire.yaml                # 5ire AI Desktop (BGE-M3 本地向量模型)
 │   ├── alma.yaml                # Alma AI Agent
 │   ├── bolt.yaml                # Bolt (bolt.new / Bolt.diy)
-│   ├── cherry-studio.yaml       # Cherry Studio (多模型客户端)
+│   ├── cherry-studio.yaml       # Cherry Studio (会话大附件与向量库细粒度拆分)
 │   ├── claude-code.yaml         # Anthropic Claude Code CLI
 │   ├── codex.yaml               # OpenAI Codex CLI
 │   ├── cursor.yaml              # Cursor (AI IDE)
 │   ├── gemini-antigravity.yaml  # Google Antigravity & Gemini CLI
+│   ├── google-chrome.yaml       # Google Chrome (Gemini Nano 端侧模型、多通道与幽灵规则)
 │   ├── hermes.yaml              # Hermes Agent (多进程守护网关)
 │   ├── kiro.yaml                # Kiro IDE
+│   ├── lark-and-steam.yaml      # 飞书 (Lark/Feishu) & Steam 孤儿库 (保护游戏本体与存档)
+│   ├── microsoft-edge.yaml      # Microsoft Edge (多通道矩阵、端侧语音/语言模型)
 │   ├── ollama.yaml              # Ollama 本地模型运行时
 │   ├── trae.yaml                # ByteDance Trae AI IDE
+│   ├── vscode.yaml              # Visual Studio Code (多通道矩阵与工作区缓存)
+│   ├── wechat-devtools.yaml     # 微信开发者工具 (模拟器与小程序编译缓存)
 │   ├── windsurf.yaml            # Codeium Windsurf Editor
 │   └── workbuddy.yaml           # WorkBuddy AI
 ├── docs/
 │   ├── architecture-and-lessons-learned.md # 实战经验与架构指南 (v1.2 Milestone)
-│   └── rule-schema.md           # 架构设计规范与数据协议文档
-├── sea_otter/                   # 核心 Python 引擎
+│   ├── rule-schema.md           # 规则规范说明文档
+│   └── todo-roadmap.md          # 演进路线图与迭代看板
+├── sea_otter/                   # 核心 Python 引擎 (含内置 rules/ 与 schema/ 同步副本)
 │   ├── safety.py                # 四级安全防护矩阵与系统红线库
-│   ├── scanner.py               # 规则驱动的体检与多维状态识别
-│   ├── cleaner.py               # 安全移入系统废纸篓执行引擎
-│   ├── ui.py                    # 终端视觉与四级色彩徽标
-│   └── cli.py                   # 命令行交互与调度
-├── tests/                       # 单元测试套件 (19 项全覆盖)
+│   ├── scanner.py               # RuleScanner / AIModelScanner / RootOrphanScanner / ChannelRedundancyScanner
+│   ├── cleaner.py               # SafeCleaner 与 QuarantineManager (原子隔离与无损回滚)
+│   ├── validator.py             # Rule Schema v1.2 零依赖深度校验器
+│   ├── ui.py                    # 终端视觉与多维状态/风险/模型/幽灵/通道徽标
+│   └── cli.py                   # 命令行交互与子命令调度
+├── tests/
+│   └── test_suite.py            # 自动化单元测试套件 (51 项全覆盖)
 ├── pyproject.toml
 ├── setup.py
 ├── .gitignore
-└── README.md
+├── README.md
+└── README_EN.md
 ```
 
 ---
@@ -142,69 +164,116 @@ cd sea-otter
 
 ## 💻 CLI 使用指南
 
-### 1. 扫描与体检 (`scan`)
-输出带有四级安全风险色彩徽标、软件存活状态及空间汇总报告：
+直接输入 `sea-otter` 可启动交互式控制台主菜单；也支持完整子命令用于快速排查与脚本自动化：
 
+### 1. 扫描与体检 (`scan`)
 ```bash
-# 默认扫描所有规则，并输出空间占用与四级安全矩阵汇总
+# 默认全盘扫描（包含 19 款规则、根目录幽灵残留与多通道孤岛）
 sea-otter scan
 
 # 仅扫描指定的一个或多个工具
-sea-otter scan cursor codex claude-code
+sea-otter scan cursor codex google-chrome
+
+# 专项扫描本地 AI 端侧大模型与权重占用 (如 Gemini Nano, GGUF, BGE-M3)
+sea-otter scan --models
+
+# 专项扫描支持安全减负的目标 (会话大附件、向量嵌入库、缓存)
+sea-otter scan --slim
+
+# 专项扫描根目录散落文件、幽灵目录与骨架空目录 (L1 极低风险)
+sea-otter scan --ghosts
+
+# 专项检测停用超过 90 天的浏览器/IDE 多通道测试孤岛 (Canary/Dev/Beta)
+sea-otter scan --channels
 
 # 显示所有工具（包含未安装且整洁无残留的项）
 sea-otter scan --all
 
-# 以 JSON 格式输出（带 risk_level，供 Raycast 插件或第三方脚本调用）
+# 以 JSON 格式输出（含 risk_level、ghost_type、channel_name 等完整元数据）
 sea-otter scan --json
 ```
 
 ### 2. 安全清理 (`clean`)
-默认仅清理通过安全仲裁的 **L1（极低风险）** 与 **L2（明确已卸载）** 孤儿残留，所有被清理项安全移入 macOS 废纸篓：
+默认仅清理通过安全仲裁的 **L1（极低风险）** 与 **L2（明确已卸载）** 孤儿残留，并写入 `~/.Trash/AppSupport_Cleanup_<timestamp>/` 原子隔离区：
 
 ```bash
 # Dry-run 模拟预览（只读模式，不修改任何文件系统）
 sea-otter clean --dry-run
 sea-otter clean cursor --dry-run
 
+# 专项清理本地 AI 端侧大模型（自动放行 L3 模型权重，保留软件配置）
+sea-otter clean --models --dry-run
+
+# 安全减负模式（仅释放会话大附件、向量嵌入库与缓存，100% 保护核心数据库与密钥）
+sea-otter clean cherry-studio --slim --dry-run
+
+# 一键清理根目录散落文件、幽灵目录与骨架空目录
+sea-otter clean --ghosts --dry-run
+
+# 一键清理停用超过 90 天的测试通道孤岛 (Canary/Dev/Beta)
+sea-otter clean --channels --dry-run
+
 # 仅清理纯缓存（Cache）分类
 sea-otter clean --category caches --dry-run
 
-# 纳入 L3 在用软件减负项（如正在使用的软件本地模型权重、日志缓存）
+# 纳入全部 L3 在用软件减负项或敏感凭据
 sea-otter clean --include-l3 --dry-run
+sea-otter clean --include-secrets --dry-run
 
-# 包含敏感凭据一起清理（默认会保护跳过 Token/密钥）
-sea-otter clean --include-secrets
-
-# 免交互确认直接清理
+# 免交互确认直接归档至原子隔离区
 sea-otter clean cursor -y
 ```
 
-### 3. 规则库查看与校验 (`rules`)
+### 3. 原子隔离区查看与无损回滚 (`rollback`)
 ```bash
-# 查看内置收录的工具规则列表
+# 列出 ~/.Trash 中所有历史清理会话及 manifest.json 摘要
+sea-otter rollback --list
+
+# 预览恢复最近一次清理会话（只读 Dry-run）
+sea-otter rollback --dry-run
+
+# 一键无损恢复最近一次（或指定 session_id）清理的所有文件至原路径
+sea-otter rollback
+sea-otter rollback cleanup_20261125_114500 -y
+
+# 若原路径已新建同名文件，显式指定 --force 覆盖恢复
+sea-otter rollback cleanup_20261125_114500 --force -y
+```
+
+### 4. 规则库查看与深度校验 (`rules`) & 项目信息 (`about`)
+```bash
+# 查看内置收录的 19 款工具规则列表
 sea-otter rules list
 
-# 校验所有规则的 YAML 规范与字段完整性
+# 使用 Rule Schema v1.2 校验所有规则的字段、通道矩阵与幽灵正则语法
 sea-otter rules validate
+
+# 查看 Sea-Otter 设计理念与安全防线
+sea-otter about
 ```
 
 ---
 
 ## 🚀 规划路线 (Roadmap)
 
-- [x] **Phase 1: 规则规范定义与首批核心工具指纹库** (14 款主流核心 AI 工具)
-- [x] **Phase 2: 本地扫描与安全矩阵引擎**
-  - [x] **四级安全防护矩阵 (L1 ~ L4)** 与系统红线库 (`com.apple.TCC` 等)
-  - [x] 进程表与单例锁活跃存活交叉验证（如 Hermes 守护保护）
-  - [x] 代码仓库与工作区资产绝对免疫（`.git`, `.svn`, `.obsidian`）
-  - [x] 智能嵌套去重与 macOS 系统原生废纸篓软着陆隔离
-- [ ] **Phase 3: 现代扫描穿透与端侧模型治理 (v1.2 架构演进)**
-  - [ ] 跨平台 Bug 与根目录散落探测 (`(null)` 幽灵目录、散落锁文件)
-  - [ ] Chrome 4GB 端侧大模型 (`OptGuideOnDeviceModel` / Gemini Nano) 专项裁剪
-  - [ ] 多通道发布孤岛检测（Edge / Chrome Stable vs Canary/Dev 活跃度交叉仲裁）
-  - [ ] 原子隔离归档与一键无损回滚系统 (`sea-otter rollback [session_id]`)
-- [ ] **Phase 4: Agentic 接口与生态交付**
-  - [ ] Antigravity / Claude Code 原生 MCP Server 支持
-  - [ ] Raycast 扩展插件与 Homebrew 分发
+- [x] **Phase 1 & P0: 核心安全矩阵与 AI 资产治理**
+  - [x] **四级安全防护矩阵 (L1 ~ L4)**、系统红线库 (`com.apple.TCC` 等)、进程锁验证与 `.git` 免疫
+  - [x] **端侧大模型识别引擎 (`AIModelScanner`)**（支持 Gemini Nano 4GB 模型独立裁剪）
+  - [x] **本地会话库与向量嵌入细粒度裁剪 (`--slim`)**（支持 `sub_targets` 拆解与核心库硬隔离）
+  - [x] **Rule Schema v1.2 升级与深度校验器 (`validator.py`)**
+- [x] **Phase 2 & P1: 扫描盲区穿透与原子无损回滚**
+  - [x] **跨平台 Bug 与根目录散落探测 (`RootOrphanScanner`)**：`(null)` 幽灵目录、散落单文件、死锁标记、`< 64KB` 骨架空目录
+  - [x] **多通道发布孤岛检测 (`ChannelRedundancyScanner`)**：Edge / Chrome / VS Code 90 天活跃度交叉仲裁
+  - [x] **原子隔离归档与一键无损回滚系统 (`sea-otter rollback`)**：`manifest.json` 完整元数据清单
+  - [x] **官方规则库第一轮扩充**：新增并完善 Chrome / Edge / 微信开发者工具 / 飞书 & Steam / VS Code（共 19 款规则）
+- [ ] **Phase 3 & P2: 生态扩展、反向推导与 Agentic 交付**
+  - [ ] 应用名与存储路径脱节的三级反向映射引擎 (`Association Engine`)
+  - [ ] 敏感凭据与 API Key 深度隐私审计 (`Secret Leak Warning`)
+  - [ ] Antigravity / Claude Code 原生 MCP Server (`sea-otter-mcp`) 集成
+  - [ ] `os.scandir` + `ThreadPoolExecutor` 并发 I/O 性能优化
 
+---
+
+## 📄 开源协议
+
+本项目基于 [MIT License](LICENSE) 开源。欢迎通过 PR 贡献更多工具规则，提交前请执行 `sea-otter rules validate` 与 `python3 -m unittest tests.test_suite` 验证合规性。
