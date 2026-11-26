@@ -16,6 +16,10 @@
   <a href="README_EN.md"><img src="https://img.shields.io/badge/docs-English-blue.svg" alt="English Documentation"></a>
 </p>
 
+<p align="center">
+  <img src="assets/banner.jpg" alt="Sea-Otter Banner" width="100%" style="border-radius: 12px;">
+</p>
+
 ---
 
 ## 🌟 为什么需要 Sea-Otter？
@@ -68,7 +72,8 @@
 
 ```text
 sea-otter/
-├── assets/                      # 项目资源（Logo 图标等）
+├── assets/                      # 项目资源（Logo、宣传 Banner 等）
+│   ├── banner.jpg
 │   └── logo.png
 ├── schema/
 │   └── rule.schema.json         # 规则库 JSON Schema 规范 (v1.2)

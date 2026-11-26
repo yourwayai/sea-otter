@@ -69,7 +69,8 @@ For modern developers and AI storage governance, **safety precedes everything**.
 
 ```text
 sea-otter/
-├── assets/                      # Brand assets (logo, icons)
+├── assets/                      # Brand assets (banner, logo, icons)
+│   ├── banner.jpg
 │   └── logo.png
 ├── schema/                      # Rule schema specification (v1.2)
 │   └── rule.schema.json
