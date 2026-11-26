@@ -9,9 +9,17 @@ import tempfile
 import unittest
 import subprocess
 import json
+import plistlib
 import yaml
 
-from sea_otter.scanner import RuleScanner, TargetMatch, AIModelScanner, RootOrphanScanner, ChannelRedundancyScanner
+from sea_otter.scanner import (
+    RuleScanner,
+    TargetMatch,
+    AIModelScanner,
+    RootOrphanScanner,
+    ChannelRedundancyScanner,
+    AssociationEngine,
+)
 from sea_otter.safety import validate_target_safety, contains_workspace_or_repo, normalize_path, RiskLevel
 from sea_otter.cleaner import SafeCleaner, QuarantineManager, QUARANTINE_DIR_PREFIX
 from sea_otter.validator import validate_rule_schema_v12
@@ -357,6 +365,22 @@ class TestCLIExecution(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         data = json.loads(proc.stdout)
         self.assertIsInstance(data, list)
+
+    def test_cli_scan_associations_flag(self):
+        proc = subprocess.run(["sea-otter", "scan", "-A", "--json"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0)
+        data = json.loads(proc.stdout)
+        self.assertIsInstance(data, list)
+        for tool in data:
+            for t in tool.get("targets", []):
+                self.assertIn(t.get("association_tier"), [1, 2, 3])
+                self.assertEqual(t.get("risk_level"), "L2_ORPHAN")
+
+    def test_cli_clean_associations_dry_run(self):
+        proc = subprocess.run(["sea-otter", "clean", "-A", "--dry-run"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("三级反向映射孤儿清理模式", proc.stdout)
+        self.assertIn("Dry-run 只读模式", proc.stdout)
 
 
 class TestFineGrainedSlimming(unittest.TestCase):
@@ -1142,6 +1166,238 @@ class TestQuarantineRollback(unittest.TestCase):
             rb_traversal = qm.rollback_session(cleaner.last_session_id)
             self.assertEqual(rb_traversal.failed_count, 1)
             self.assertIn("越界", rb_traversal.results[0].message)
+
+
+class TestAssociationEngine(unittest.TestCase):
+    """测试 Task 08: 应用名与路径脱节的三级反向映射引擎 (Association Engine)"""
+
+    @staticmethod
+    def _create_mock_app(app_dir: str, app_filename: str, bundle_id: str, display_name: str, executable: str = ""):
+        contents = os.path.join(app_dir, app_filename, "Contents")
+        os.makedirs(contents, exist_ok=True)
+        plist_data = {
+            "CFBundleIdentifier": bundle_id,
+            "CFBundleDisplayName": display_name,
+            "CFBundleName": display_name,
+            "CFBundleExecutable": executable or display_name,
+        }
+        with open(os.path.join(contents, "Info.plist"), "wb") as f:
+            plistlib.dump(plist_data, f)
+
+    @staticmethod
+    def _set_tree_time(path: str, ts: float):
+        if os.path.isdir(path):
+            for root, dirs, files in os.walk(path):
+                for fn in files:
+                    os.utime(os.path.join(root, fn), (ts, ts))
+                for dn in dirs:
+                    os.utime(os.path.join(root, dn), (ts, ts))
+        os.utime(path, (ts, ts))
+
+    def test_tier1_plist_and_bundle_id_reverse_lookup(self):
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            apps_dir = os.path.join(tmp_dir, "Applications")
+            support_dir = os.path.join(tmp_dir, "Users", "tester", "Library", "Application Support")
+            os.makedirs(apps_dir)
+            os.makedirs(support_dir)
+
+            # 安装两个应用：DemoApp 与 ChatGPT (bundle_id 与数据目录 com.openai.chat 不同)
+            self._create_mock_app(apps_dir, "DemoApp.app", "com.example.demoapp", "DemoApp")
+            self._create_mock_app(apps_dir, "ChatGPT.app", "com.openai.codex", "ChatGPT")
+
+            # 1. 已卸载应用的 Info.plist 目录 -> Tier 1 判定为孤儿
+            orphan_plist_dir = os.path.join(support_dir, "LegacyHelperData")
+            os.makedirs(orphan_plist_dir)
+            with open(os.path.join(orphan_plist_dir, "Info.plist"), "wb") as f:
+                plistlib.dump({
+                    "CFBundleIdentifier": "com.vendor.ghostapp",
+                    "CFBundleDisplayName": "Ghost App",
+                }, f)
+            with open(os.path.join(orphan_plist_dir, "cache.bin"), "wb") as f:
+                f.write(b"123456")
+
+            # 2. 已安装应用的辅助启动器 Bundle ID 目录 -> 前缀回溯判定为 installed
+            helper_dir = os.path.join(support_dir, "com.example.demoapp.launcher")
+            os.makedirs(helper_dir)
+
+            # 3. 脱节的反向域名目录 com.openai.chat -> 通过 signatures/name_idx 关联到 ChatGPT.app (installed)
+            openai_dir = os.path.join(support_dir, "com.openai.chat")
+            os.makedirs(openai_dir)
+
+            engine = AssociationEngine(
+                roots=[support_dir],
+                app_dirs=[apps_dir],
+                rules=[],
+                now=now,
+                use_spotlight=False,
+                running_processes=[],
+            )
+            report = engine.scan()
+            resolved_paths = {t.resolved_path for t in report.targets}
+
+            self.assertIn(orphan_plist_dir, resolved_paths)
+            self.assertNotIn(helper_dir, resolved_paths)
+            self.assertNotIn(openai_dir, resolved_paths)
+
+            match = next(t for t in report.targets if t.resolved_path == orphan_plist_dir)
+            self.assertEqual(match.association_tier, 1)
+            self.assertEqual(match.association_method, "plist_bundle_id")
+            self.assertEqual(match.associated_app, "Ghost App")
+            self.assertEqual(match.associated_bundle_id, "com.vendor.ghostapp")
+            self.assertEqual(match.risk_level, RiskLevel.L2_ORPHAN.value)
+
+    def test_tier2_signature_db_and_running_protection(self):
+        now = 1_800_000_000.0
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            apps_dir = os.path.join(tmp_dir, "Applications")
+            support_dir = os.path.join(tmp_dir, "Users", "tester", "Library", "Application Support")
+            os.makedirs(apps_dir)
+            os.makedirs(support_dir)
+
+            # Mock 安装了 Visual Studio Code.app，其数据目录叫 Code
+            self._create_mock_app(apps_dir, "Visual Studio Code.app", "com.microsoft.VSCode", "Visual Studio Code")
+
+            code_dir = os.path.join(support_dir, "Code")
+            os.makedirs(code_dir)
+            with open(os.path.join(code_dir, "state.vscdb"), "wb") as f:
+                f.write(b"vscode")
+
+            # 未安装的 Skype 孤儿目录 (使用自定义 signatures 避免依赖宿主机 /Applications)
+            uninstalled_dir = os.path.join(support_dir, "CustomDecoupledDir")
+            os.makedirs(uninstalled_dir)
+            with open(os.path.join(uninstalled_dir, "history.db"), "wb") as f:
+                f.write(b"history_bytes")
+
+            # 另一个在进程中运行的应用目录
+            running_dir = os.path.join(support_dir, "RunningToolDir")
+            os.makedirs(running_dir)
+            with open(os.path.join(running_dir, "data.bin"), "wb") as f:
+                f.write(b"running")
+
+            extra_sigs = {
+                "customdecoupleddir": {
+                    "app_name": "Custom Decoupled App",
+                    "bundle_ids": ["com.test.customdecoupled"],
+                    "app_paths": [os.path.join(apps_dir, "Custom Decoupled App.app")],
+                    "process_names": ["CustomDecoupled"],
+                },
+                "runningtooldir": {
+                    "app_name": "Running Tool",
+                    "bundle_ids": ["com.test.runningtool"],
+                    "app_paths": [os.path.join(apps_dir, "Running Tool.app")],
+                    "process_names": ["RunningToolProc"],
+                },
+            }
+
+            engine = AssociationEngine(
+                roots=[support_dir],
+                app_dirs=[apps_dir],
+                rules=[],
+                now=now,
+                use_spotlight=False,
+                running_processes=["/Applications/RunningToolProc"],
+                extra_signatures=extra_sigs,
+            )
+            report = engine.scan()
+            resolved_paths = {t.resolved_path for t in report.targets}
+
+            self.assertNotIn(code_dir, resolved_paths, "已安装 VS Code 的 Code 目录不应误判为孤儿")
+            self.assertNotIn(running_dir, resolved_paths, "正在运行的进程对应目录必须保护跳过")
+            self.assertIn(uninstalled_dir, resolved_paths)
+
+            match = next(t for t in report.targets if t.resolved_path == uninstalled_dir)
+            self.assertEqual(match.association_tier, 2)
+            self.assertEqual(match.association_method, "signature_db")
+            self.assertEqual(match.associated_app, "Custom Decoupled App")
+            self.assertEqual(match.associated_bundle_id, "com.test.customdecoupled")
+            self.assertEqual(match.risk_level, RiskLevel.L2_ORPHAN.value)
+
+    def test_tier3_heuristic_idle_and_safety_filters(self):
+        now = 1_800_000_000.0
+        old_ts = now - 200 * 86400
+        recent_ts = now - 30 * 86400
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            apps_dir = os.path.join(tmp_dir, "Applications")
+            support_dir = os.path.join(tmp_dir, "Users", "tester", "Library", "Application Support")
+            os.makedirs(apps_dir)
+            os.makedirs(support_dir)
+
+            # 已安装 Cool Editor.app，其数据目录名称去空格后为 CoolEditor (超过200天未改但应用在用)
+            self._create_mock_app(apps_dir, "Cool Editor.app", "com.cool.editor", "Cool Editor")
+            installed_norm_dir = os.path.join(support_dir, "CoolEditor")
+            os.makedirs(installed_norm_dir)
+            with open(os.path.join(installed_norm_dir, "prefs.json"), "w") as f:
+                f.write("{}")
+            self._set_tree_time(installed_norm_dir, old_ts)
+
+            # 1. 超过 180 天未访问且无对应应用的未知目录 -> Tier 3 孤儿
+            stale_unknown = os.path.join(support_dir, "OldAbandonedClient")
+            os.makedirs(stale_unknown)
+            with open(os.path.join(stale_unknown, "session.dat"), "wb") as f:
+                f.write(b"old_session_payload")
+            self._set_tree_time(stale_unknown, old_ts)
+
+            # 2. 仅 30 天未访问的未知目录 -> 不应标记
+            recent_unknown = os.path.join(support_dir, "RecentCliTool")
+            os.makedirs(recent_unknown)
+            with open(os.path.join(recent_unknown, "db.dat"), "wb") as f:
+                f.write(b"recent")
+            self._set_tree_time(recent_unknown, recent_ts)
+
+            # 3. 含 .git 工程目录的旧目录 -> 免疫保护
+            git_dir = os.path.join(support_dir, "AbandonedGitRepo")
+            os.makedirs(os.path.join(git_dir, ".git"))
+            with open(os.path.join(git_dir, "README.md"), "w") as f:
+                f.write("repo")
+            self._set_tree_time(git_dir, old_ts)
+
+            # 4. 系统红线/原生目录 & 已被 YAML 规则覆盖的目录 -> 保护跳过
+            sys_dir = os.path.join(support_dir, "Quick Look")
+            os.makedirs(sys_dir)
+            with open(os.path.join(sys_dir, "index.db"), "wb") as f:
+                f.write(b"sys")
+            self._set_tree_time(sys_dir, old_ts)
+
+            rule_covered = os.path.join(support_dir, "CoveredTool")
+            os.makedirs(rule_covered)
+            with open(os.path.join(rule_covered, "cache.bin"), "wb") as f:
+                f.write(b"covered")
+            self._set_tree_time(rule_covered, old_ts)
+
+            mock_rules = [
+                {
+                    "id": "covered-tool",
+                    "name": "Covered Tool",
+                    "targets": {"caches": [{"path": rule_covered}]},
+                }
+            ]
+
+            engine = AssociationEngine(
+                roots=[support_dir],
+                app_dirs=[apps_dir],
+                rules=mock_rules,
+                stale_days=180,
+                now=now,
+                use_spotlight=False,
+                running_processes=[],
+            )
+            report = engine.scan()
+            resolved_paths = {t.resolved_path for t in report.targets}
+
+            self.assertIn(stale_unknown, resolved_paths)
+            self.assertNotIn(installed_norm_dir, resolved_paths)
+            self.assertNotIn(recent_unknown, resolved_paths)
+            self.assertNotIn(git_dir, resolved_paths)
+            self.assertNotIn(sys_dir, resolved_paths)
+            self.assertNotIn(rule_covered, resolved_paths)
+
+            match = next(t for t in report.targets if t.resolved_path == stale_unknown)
+            self.assertEqual(match.association_tier, 3)
+            self.assertEqual(match.association_method, "heuristic")
+            self.assertGreaterEqual(match.inactive_days, 200)
+            self.assertEqual(match.risk_level, RiskLevel.L2_ORPHAN.value)
 
 
 if __name__ == "__main__":

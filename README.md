@@ -40,6 +40,7 @@
 - ✂️ **细粒度会话与向量裁剪 (`--slim`)**：支持 `sub_targets` 递归拆解与 `prunable` 标识，精准清理会话大附件（`Data/Files`）与向量嵌入库（`IndexedDB`），100% 免疫核心数据库（如 `cherrystudio.sqlite`）与助手配置。
 - 👻 **根目录散落与幽灵探测 (`RootOrphanScanner`, `--ghosts`)**：直击存储根节点，自动捕获 `^(\(null\)|undefined|null|none|\s+)$` 异常目录、历史解包单图（`2052-TM*`）、CoreData 违规库（`default.store*`）、死锁标记（`.ACCC_Lock`/`.ADCS_Lock`）与 `< 64KB` 骨架空目录。
 - 🏝️ **多通道发布孤岛交叉检测 (`ChannelRedundancyScanner`, `--channels`)**：自动关联 Chrome / Edge / VS Code 家族矩阵，当正式版近期高频活跃而测试通道（Canary / Dev / Beta / Insiders）超过 **90 天**未启动时，提示一键安全清理。
+- 🔗 **三级反向映射孤儿探测 (`AssociationEngine`, `--associations`)**：通过 `Info.plist` / `CFBundleIdentifier` 反查、高频脱节特征字典（如 `Code` → VS Code、`com.openai.chat` → ChatGPT）及 **180 天**无进程访问启发式推导，精准捕获已卸载历史应用残留。
 - ⏪ **原子隔离区与一键无损回滚 (`sea-otter rollback`)**：清理时自动在 `~/.Trash/AppSupport_Cleanup_<timestamp>/` 建立隔离目录并生成标准 `manifest.json`（v1.2.0），支持重名消歧、冲突保护与按会话一键无损恢复。
 
 ---
@@ -103,13 +104,13 @@ sea-otter/
 │   └── todo-roadmap.md          # 演进路线图与迭代看板
 ├── sea_otter/                   # 核心 Python 引擎 (含内置 rules/ 与 schema/ 同步副本)
 │   ├── safety.py                # 四级安全防护矩阵与系统红线库
-│   ├── scanner.py               # RuleScanner / AIModelScanner / RootOrphanScanner / ChannelRedundancyScanner
+│   ├── scanner.py               # RuleScanner / AIModelScanner / RootOrphanScanner / ChannelRedundancyScanner / AssociationEngine
 │   ├── cleaner.py               # SafeCleaner 与 QuarantineManager (原子隔离与无损回滚)
 │   ├── validator.py             # Rule Schema v1.2 零依赖深度校验器
 │   ├── ui.py                    # 终端视觉与多维状态/风险/模型/幽灵/通道徽标
 │   └── cli.py                   # 命令行交互与子命令调度
 ├── tests/
-│   └── test_suite.py            # 自动化单元测试套件 (51 项全覆盖)
+│   └── test_suite.py            # 自动化单元测试套件 (56 项全覆盖)
 ├── pyproject.toml
 ├── setup.py
 ├── .gitignore
@@ -191,6 +192,9 @@ sea-otter scan --ghosts
 # 专项检测停用超过 90 天的浏览器/IDE 多通道测试孤岛 (Canary/Dev/Beta)
 sea-otter scan --channels
 
+# 专项执行三级反向映射孤儿扫描 (Plist / 特征库 / 180天启发式推导)
+sea-otter scan --associations
+
 # 显示所有工具（包含未安装且整洁无残留的项）
 sea-otter scan --all
 
@@ -217,6 +221,9 @@ sea-otter clean --ghosts --dry-run
 
 # 一键清理停用超过 90 天的测试通道孤岛 (Canary/Dev/Beta)
 sea-otter clean --channels --dry-run
+
+# 专项清理三级反向映射引擎推导的已卸载应用孤儿目录
+sea-otter clean --associations --dry-run
 
 # 仅清理纯缓存（Cache）分类
 sea-otter clean --category caches --dry-run
@@ -272,7 +279,7 @@ sea-otter about
   - [x] **原子隔离归档与一键无损回滚系统 (`sea-otter rollback`)**：`manifest.json` 完整元数据清单
   - [x] **官方规则库第一轮扩充**：新增并完善 Chrome / Edge / 微信开发者工具 / 飞书 & Steam / VS Code（共 19 款规则）
 - [ ] **Phase 3 & P2: 生态扩展、反向推导与 Agentic 交付**
-  - [ ] 应用名与存储路径脱节的三级反向映射引擎 (`Association Engine`)
+  - [x] 应用名与存储路径脱节的三级反向映射引擎 (`Association Engine`)
   - [ ] 敏感凭据与 API Key 深度隐私审计 (`Secret Leak Warning`)
   - [ ] Antigravity / Claude Code 原生 MCP Server (`sea-otter-mcp`) 集成
   - [ ] `os.scandir` + `ThreadPoolExecutor` 并发 I/O 性能优化

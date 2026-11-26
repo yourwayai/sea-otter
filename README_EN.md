@@ -37,6 +37,7 @@ Traditional Mac cleanup apps (such as CleanMyMac or AppCleaner) typically rely o
 - ✂️ **Fine-Grained Slimming Mode (`--slim`)**: Recursively expands `sub_targets` and `prunable` markers to trim large chat attachments (`Data/Files`) and vector indices (`IndexedDB`) while protecting core databases (e.g., `cherrystudio.sqlite`) and configs.
 - 👻 **Root Orphan & Ghost Bug Scanner (`RootOrphanScanner`, `--ghosts`)**: Scans storage root entries directly to catch `^(\(null\)|undefined|null|none|\s+)$` directories, legacy unpacked assets (`2052-TM*`), misplaced CoreData files (`default.store*`), dead locks (`.ACCC_Lock`, `.ADCS_Lock`), and `< 64KB` skeleton empty directories.
 - 🏝️ **Multi-Channel Redundancy Cross-Check (`ChannelRedundancyScanner`, `--channels`)**: Links Chrome, Edge, and VS Code channel families; flags Canary/Dev/Beta/Insiders channels inactive for **> 90 days** while Stable is actively used.
+- 🔗 **Three-Tier Reverse Association Engine (`AssociationEngine`, `--associations`)**: Resolves decoupled app/folder names via `Info.plist` / `CFBundleIdentifier` lookup, curated signature DB (`Code` → VS Code, `com.openai.chat` → ChatGPT), and **180-day** idle heuristic probing.
 - ⏪ **Atomic Quarantine & Lossless Rollback (`sea-otter rollback`)**: Archives cleaned items into `~/.Trash/AppSupport_Cleanup_<timestamp>/` with a structured `manifest.json` (v1.2.0), automatic name collision disambiguation, conflict protection, and one-command restoration.
 
 ---
@@ -100,13 +101,13 @@ sea-otter/
 │   └── todo-roadmap.md
 ├── sea_otter/                   # Python package engine (includes synced rules/ & schema/)
 │   ├── safety.py                # Four-Tier Safety Matrix & System Redline Vault
-│   ├── scanner.py               # RuleScanner / AIModelScanner / RootOrphanScanner / ChannelRedundancyScanner
+│   ├── scanner.py               # RuleScanner / AIModelScanner / RootOrphanScanner / ChannelRedundancyScanner / AssociationEngine
 │   ├── cleaner.py               # SafeCleaner & QuarantineManager (atomic archive & rollback)
 │   ├── validator.py             # Zero-dependency Rule Schema v1.2 validator
 │   ├── ui.py                    # Terminal formatting & badges
 │   └── cli.py                   # CLI dispatcher & interactive console
 ├── tests/
-│   └── test_suite.py            # Automated unit test suite (51 tests)
+│   └── test_suite.py            # Automated unit test suite (56 tests)
 ├── pyproject.toml               # PEP 517 / 621 package metadata
 ├── README.md                    # Chinese Documentation
 └── README_EN.md                 # English Documentation
@@ -177,6 +178,9 @@ sea-otter scan --ghosts
 # Scan stale preview/dev browser & IDE channels (> 90 days inactive)
 sea-otter scan --channels
 
+# Scan decoupled orphan directories via 3-tier reverse association (Plist / Signature DB / 180-day heuristic)
+sea-otter scan --associations
+
 # Include clean tools with zero residuals
 sea-otter scan --all
 
@@ -201,6 +205,9 @@ sea-otter clean --ghosts --dry-run
 
 # Clean stale Canary/Dev/Beta channels inactive for > 90 days
 sea-otter clean --channels --dry-run
+
+# Clean orphaned app directories resolved by the 3-tier Association Engine
+sea-otter clean --associations --dry-run
 
 # Clean only pure caches across all tools
 sea-otter clean --category caches --dry-run
@@ -256,7 +263,7 @@ sea-otter about
   - [x] **Atomic Quarantine & Lossless Rollback (`sea-otter rollback`)**: `manifest.json` archival & restoration
   - [x] **Official Rules Expansion Round 1**: Chrome, Edge, WeChat DevTools, Lark/Steam, VS Code (19 rules total)
 - [ ] **Phase 3 & P2: Ecosystem Expansion & Agentic Integration**
-  - [ ] Three-tier reverse Association Engine for decoupled app/folder names
+  - [x] Three-tier reverse Association Engine for decoupled app/folder names
   - [ ] Deep Secret Leak Warning for plaintext OAuth tokens and API keys
   - [ ] Native Antigravity / Claude Code MCP Server (`sea-otter-mcp`)
   - [ ] Concurrent I/O scanning optimization (`os.scandir` + `ThreadPoolExecutor`)

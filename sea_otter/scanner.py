@@ -8,9 +8,10 @@ import re
 import glob
 import json
 import time
+import plistlib
 import subprocess
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any, Tuple, Set
 import yaml
 
 from sea_otter.safety import (
@@ -47,6 +48,10 @@ class TargetMatch:
     stable_channel_id: Optional[str] = None
     tool_id: Optional[str] = None
     tool_name: Optional[str] = None
+    association_tier: Optional[int] = None
+    association_method: Optional[str] = None
+    associated_app: Optional[str] = None
+    associated_bundle_id: Optional[str] = None
 
 @dataclass
 class AIModelInspectionResult:
@@ -360,9 +365,14 @@ class RootOrphanScanner:
         "Knowledge",
         "MobileSync",
         "Motion",
+        "Music",
+        "Podcasts",
         "Preview",
+        "Quick Look",
         "SyncedPreferences",
+        "SyncServices",
         "System Preferences",
+        "TV",
         "TrustedPeersHelper",
         "accountsd",
         "familycircled",
@@ -372,6 +382,7 @@ class RootOrphanScanner:
         "locationaccessstored",
         "syncdefaultsd",
         "transparencyd",
+        "videosubscriptionsd",
     }
 
     ABNORMAL_NAME_REGEX = re.compile(r"^(\(null\)|undefined|null|none|\s+)$", re.IGNORECASE)
@@ -1071,6 +1082,911 @@ class ChannelRedundancyScanner:
         )
 
 
+@dataclass
+class InstalledAppInfo:
+    """已安装 macOS 应用元数据索引条目"""
+    name: str
+    app_path: str
+    bundle_id: str = ""
+    executable: str = ""
+    display_name: str = ""
+
+
+@dataclass
+class AssociationResult:
+    """三级反向映射引擎单目录推导结果"""
+    dirpath: str
+    dir_name: str
+    tier: Optional[int]          # 1 | 2 | 3 | None
+    method: str                  # "plist_bundle_id" | "signature_db" | "heuristic" | "unresolved" | "protected"
+    status: str                  # "running" | "installed" | "orphaned" | "active_unknown" | "skipped"
+    app_name: Optional[str] = None
+    bundle_id: Optional[str] = None
+    inactive_days: Optional[int] = None
+    reason: str = ""
+
+
+class AssociationEngine:
+    """
+    应用名与存储路径脱节的三级反向映射引擎 (Association Engine)
+
+    解决如 "应用叫 VS Code，目录叫 Code；应用叫 ChatGPT，目录叫 com.openai.chat" 导致的孤儿漏报难题：
+      • 一级 (Tier 1 - Plist & Bundle ID): 解析目录下 Info.plist / CFBundleIdentifier 或反查反向域名目录名
+      • 二级 (Tier 2 - Signature DB):      内置高频特征字典反查脱节的目录名 -> 宿主应用 / Bundle ID
+      • 三级 (Tier 3 - Heuristic):         无对应应用/活跃进程，且超过 180 天未被任何进程访问 -> 启发式孤儿
+    """
+
+    DEFAULT_ROOTS = ["~/Library/Application Support"]
+    DEFAULT_APP_DIRS = ["/Applications", "/System/Applications", "~/Applications"]
+    DEFAULT_STALE_DAYS = 180
+    BUNDLE_ID_REGEX = re.compile(r"^[a-zA-Z0-9-]+(\.[a-zA-Z0-9_-]+){2,}$")
+    LOCK_INDICATORS = ("SingletonLock", "SingletonSocket", "lockfile", ".lock")
+
+    # 共享底层框架或系统跨应用辅助目录，不作为单一软件孤儿贸然标记
+    SHARED_INFRA_DIRS = {
+        "CEF",
+        "GoogleUpdater",
+        "EdgeUpdater",
+        "Microsoft AutoUpdate",
+        "Microsoft Update Assistant",
+        "Microsoft DevDiv",
+        "WebKit",
+        "CloudKit",
+        "Users",
+        "Temp",
+        "tmp",
+        "Logs",
+    }
+
+    # 二级高频特征字典：将与 .app 名称脱节的数据目录映射到真实宿主应用元数据
+    KNOWN_APP_SIGNATURES: Dict[str, Dict[str, Any]] = {
+        "code": {
+            "app_name": "Visual Studio Code",
+            "bundle_ids": ["com.microsoft.VSCode"],
+            "app_paths": ["/Applications/Visual Studio Code.app"],
+            "process_names": ["Visual Studio Code", "Code Helper"],
+        },
+        "code - insiders": {
+            "app_name": "Visual Studio Code - Insiders",
+            "bundle_ids": ["com.microsoft.VSCodeInsiders"],
+            "app_paths": ["/Applications/Visual Studio Code - Insiders.app"],
+            "process_names": ["Visual Studio Code - Insiders"],
+        },
+        "com.openai.chat": {
+            "app_name": "ChatGPT",
+            "bundle_ids": ["com.openai.chat"],
+            "app_paths": ["/Applications/ChatGPT.app"],
+            "process_names": ["ChatGPT"],
+        },
+        "openai": {
+            "app_name": "ChatGPT",
+            "bundle_ids": ["com.openai.chat"],
+            "app_paths": ["/Applications/ChatGPT.app"],
+            "process_names": ["ChatGPT"],
+        },
+        "telegram desktop": {
+            "app_name": "Telegram",
+            "bundle_ids": ["ru.keepcoder.Telegram", "org.telegram.desktop"],
+            "app_paths": ["/Applications/Telegram.app", "/Applications/Telegram Desktop.app"],
+            "process_names": ["Telegram"],
+        },
+        "bravesoftware": {
+            "app_name": "Brave Browser",
+            "bundle_ids": ["com.brave.Browser"],
+            "app_paths": ["/Applications/Brave Browser.app"],
+            "process_names": ["Brave Browser"],
+        },
+        "firefox": {
+            "app_name": "Firefox",
+            "bundle_ids": ["org.mozilla.firefox"],
+            "app_paths": ["/Applications/Firefox.app"],
+            "process_names": ["firefox"],
+        },
+        "mozilla": {
+            "app_name": "Firefox / Thunderbird (Mozilla)",
+            "bundle_ids": ["org.mozilla.firefox", "org.mozilla.thunderbird"],
+            "app_paths": ["/Applications/Firefox.app", "/Applications/Thunderbird.app"],
+            "process_names": ["firefox", "thunderbird"],
+        },
+        "videofusion": {
+            "app_name": "CapCut / VideoFusion",
+            "bundle_ids": ["com.lemon.lvoverseas", "com.bytedance.videofusion"],
+            "app_paths": ["/Applications/VideoFusion-macOS.app", "/Applications/CapCut.app"],
+            "process_names": ["VideoFusion", "CapCut"],
+        },
+        "capcut": {
+            "app_name": "CapCut",
+            "bundle_ids": ["com.lemon.lvoverseas"],
+            "app_paths": ["/Applications/CapCut.app", "/Applications/VideoFusion-macOS.app"],
+            "process_names": ["CapCut", "VideoFusion"],
+        },
+        "byteexec": {
+            "app_name": "Lark / Feishu",
+            "bundle_ids": ["com.bytedance.lark", "com.electron.lark"],
+            "app_paths": ["/Applications/Lark.app", "/Applications/Feishu.app"],
+            "process_names": ["Lark", "Feishu"],
+        },
+        "larkshell": {
+            "app_name": "Lark / Feishu",
+            "bundle_ids": ["com.bytedance.lark", "com.electron.lark"],
+            "app_paths": ["/Applications/Lark.app", "/Applications/Feishu.app"],
+            "process_names": ["Lark", "Feishu"],
+        },
+        "skype": {
+            "app_name": "Skype",
+            "bundle_ids": ["com.skype.skype"],
+            "app_paths": ["/Applications/Skype.app"],
+            "process_names": ["Skype"],
+        },
+        "jan": {
+            "app_name": "Jan AI",
+            "bundle_ids": ["jan.ai.app", "ai.jan.desktop"],
+            "app_paths": ["/Applications/Jan.app"],
+            "process_names": ["Jan"],
+        },
+        "quark": {
+            "app_name": "Quark",
+            "bundle_ids": ["com.quark.browser", "com.alibaba.quark"],
+            "app_paths": ["/Applications/Quark.app"],
+            "process_names": ["Quark"],
+        },
+        "notion mail": {
+            "app_name": "Notion Mail",
+            "bundle_ids": ["com.notion.mail", "notion.mail.id"],
+            "app_paths": ["/Applications/Notion Mail.app"],
+            "process_names": ["Notion Mail"],
+        },
+        "notion": {
+            "app_name": "Notion",
+            "bundle_ids": ["notion.id"],
+            "app_paths": ["/Applications/Notion.app"],
+            "process_names": ["Notion"],
+        },
+        "vivaldi": {
+            "app_name": "Vivaldi",
+            "bundle_ids": ["com.vivaldi.Vivaldi"],
+            "app_paths": ["/Applications/Vivaldi.app"],
+            "process_names": ["Vivaldi"],
+        },
+        "arc": {
+            "app_name": "Arc",
+            "bundle_ids": ["company.thebrowser.Browser"],
+            "app_paths": ["/Applications/Arc.app"],
+            "process_names": ["Arc"],
+        },
+        "dia": {
+            "app_name": "Dia",
+            "bundle_ids": ["company.thebrowser.dia"],
+            "app_paths": ["/Applications/Dia.app"],
+            "process_names": ["Dia"],
+        },
+        "comet": {
+            "app_name": "Comet",
+            "bundle_ids": ["ai.perplexity.comet"],
+            "app_paths": ["/Applications/Comet.app"],
+            "process_names": ["Comet"],
+        },
+        "accio": {
+            "app_name": "Accio",
+            "bundle_ids": ["com.accio.desktop"],
+            "app_paths": ["/Applications/Accio.app"],
+            "process_names": ["Accio"],
+        },
+        "cindyglobal": {
+            "app_name": "CindyGlobal",
+            "bundle_ids": [],
+            "app_paths": ["/Applications/CindyGlobal.app"],
+            "process_names": ["CindyGlobal"],
+        },
+        "citro labs": {
+            "app_name": "Citro Labs",
+            "bundle_ids": [],
+            "app_paths": ["/Applications/Citro Labs.app"],
+            "process_names": ["Citro"],
+        },
+        "lingma": {
+            "app_name": "Tongyi Lingma",
+            "bundle_ids": ["com.alibabacloud.lingma"],
+            "app_paths": ["/Applications/Lingma.app"],
+            "process_names": ["Lingma"],
+        },
+        "ibkr desktop": {
+            "app_name": "IBKR Desktop",
+            "bundle_ids": ["com.interactivebrokers.desktop"],
+            "app_paths": ["/Applications/IBKR Desktop.app"],
+            "process_names": ["IBKR Desktop"],
+        },
+        "slack": {
+            "app_name": "Slack",
+            "bundle_ids": ["com.tinyspeck.slackmacgap"],
+            "app_paths": ["/Applications/Slack.app"],
+            "process_names": ["Slack"],
+        },
+        "discord": {
+            "app_name": "Discord",
+            "bundle_ids": ["com.hnc.Discord"],
+            "app_paths": ["/Applications/Discord.app"],
+            "process_names": ["Discord"],
+        },
+        "zoom.us": {
+            "app_name": "Zoom",
+            "bundle_ids": ["us.zoom.xos"],
+            "app_paths": ["/Applications/zoom.us.app"],
+            "process_names": ["zoom.us"],
+        },
+        "sublime text": {
+            "app_name": "Sublime Text",
+            "bundle_ids": ["com.sublimetext.4", "com.sublimetext.3"],
+            "app_paths": ["/Applications/Sublime Text.app"],
+            "process_names": ["Sublime Text"],
+        },
+        "lm studio": {
+            "app_name": "LM Studio",
+            "bundle_ids": ["ai.elementlabs.lmstudio"],
+            "app_paths": ["/Applications/LM Studio.app"],
+            "process_names": ["LM Studio"],
+        },
+        "zed": {
+            "app_name": "Zed",
+            "bundle_ids": ["dev.zed.Zed"],
+            "app_paths": ["/Applications/Zed.app"],
+            "process_names": ["zed"],
+        },
+        "warp": {
+            "app_name": "Warp",
+            "bundle_ids": ["dev.warp.Warp-Stable"],
+            "app_paths": ["/Applications/Warp.app"],
+            "process_names": ["Warp"],
+        },
+        "raycast": {
+            "app_name": "Raycast",
+            "bundle_ids": ["com.raycast.macos"],
+            "app_paths": ["/Applications/Raycast.app"],
+            "process_names": ["Raycast"],
+        },
+        "docker": {
+            "app_name": "Docker Desktop",
+            "bundle_ids": ["com.docker.docker"],
+            "app_paths": ["/Applications/Docker.app"],
+            "process_names": ["Docker"],
+        },
+        "postman": {
+            "app_name": "Postman",
+            "bundle_ids": ["com.postmanlabs.mac"],
+            "app_paths": ["/Applications/Postman.app"],
+            "process_names": ["Postman"],
+        },
+        "spotify": {
+            "app_name": "Spotify",
+            "bundle_ids": ["com.spotify.client"],
+            "app_paths": ["/Applications/Spotify.app"],
+            "process_names": ["Spotify"],
+        },
+        "obsidian": {
+            "app_name": "Obsidian",
+            "bundle_ids": ["md.obsidian"],
+            "app_paths": ["/Applications/Obsidian.app"],
+            "process_names": ["Obsidian"],
+        },
+        "tailscale": {
+            "app_name": "Tailscale",
+            "bundle_ids": ["io.tailscale.ipn.macos"],
+            "app_paths": ["/Applications/Tailscale.app"],
+            "process_names": ["Tailscale"],
+        },
+        "iina": {
+            "app_name": "IINA",
+            "bundle_ids": ["com.colliderli.iina"],
+            "app_paths": ["/Applications/IINA.app"],
+            "process_names": ["IINA"],
+        },
+        "orbstack": {
+            "app_name": "OrbStack",
+            "bundle_ids": ["dev.kdrag0n.OrbStack"],
+            "app_paths": ["/Applications/OrbStack.app"],
+            "process_names": ["OrbStack"],
+        },
+        "claude": {
+            "app_name": "Claude",
+            "bundle_ids": ["com.anthropic.claudefordesktop"],
+            "app_paths": ["/Applications/Claude.app"],
+            "process_names": ["Claude"],
+        },
+        "gemini": {
+            "app_name": "Gemini",
+            "bundle_ids": ["com.google.gemini"],
+            "app_paths": ["/Applications/Gemini.app"],
+            "process_names": ["Gemini"],
+        },
+        "whatsapp": {
+            "app_name": "WhatsApp",
+            "bundle_ids": ["net.whatsapp.WhatsApp"],
+            "app_paths": ["/Applications/WhatsApp.app"],
+            "process_names": ["WhatsApp"],
+        },
+    }
+
+    def __init__(
+        self,
+        roots: Optional[List[str]] = None,
+        app_dirs: Optional[List[str]] = None,
+        rules: Optional[List[Dict[str, Any]]] = None,
+        stale_days: int = DEFAULT_STALE_DAYS,
+        now: Optional[float] = None,
+        use_spotlight: bool = True,
+        running_processes: Optional[List[str]] = None,
+        extra_signatures: Optional[Dict[str, Dict[str, Any]]] = None,
+    ):
+        self.roots = roots if roots is not None else list(self.DEFAULT_ROOTS)
+        self.app_dirs = app_dirs if app_dirs is not None else list(self.DEFAULT_APP_DIRS)
+        self.rules = rules or []
+        self.stale_days = stale_days
+        self.now = now
+        self.use_spotlight = use_spotlight
+        self._injected_processes = running_processes
+        self._process_snapshot: Optional[List[str]] = None
+        self._spotlight_cache: Dict[str, bool] = {}
+
+        self.signatures: Dict[str, Dict[str, Any]] = {
+            k.lower(): dict(v) for k, v in self.KNOWN_APP_SIGNATURES.items()
+        }
+        if extra_signatures:
+            for k, v in extra_signatures.items():
+                self.signatures[k.lower()] = dict(v)
+
+        self._bundle_index: Dict[str, InstalledAppInfo] = {}
+        self._name_index: Dict[str, InstalledAppInfo] = {}
+        self._apps_indexed = False
+        self._covered_prefixes: List[str] = self._extract_covered_prefixes(self.rules)
+
+    @staticmethod
+    def _normalize_key(name: str) -> str:
+        """归一化应用/目录名称（忽略大小写、空格及连字符）"""
+        return re.sub(r"[^a-z0-9]", "", name.lower())
+
+    @staticmethod
+    def _extract_covered_prefixes(rules: List[Dict[str, Any]]) -> List[str]:
+        """提取已有 YAML 规则覆盖的目标及锁文件路径前缀，避免与 RuleScanner 重复报告"""
+        prefixes: Set[str] = set()
+        for rule in rules:
+            for lf in rule.get("protection", {}).get("lock_files", []):
+                if lf:
+                    prefixes.add(os.path.dirname(normalize_path(lf)))
+            for ch in rule.get("channels", {}).get("related_channels", []):
+                if isinstance(ch, dict) and ch.get("data_path"):
+                    prefixes.add(normalize_path(ch["data_path"]))
+            for items in rule.get("targets", {}).values():
+                if not isinstance(items, list):
+                    continue
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    raw = item.get("path", "")
+                    if not raw:
+                        continue
+                    prefix = raw.split("*", 1)[0].rstrip("/\\")
+                    if prefix:
+                        prefixes.add(normalize_path(prefix))
+        return sorted(prefixes)
+
+    def _is_covered_by_rules(self, dirpath: str) -> bool:
+        """判定目录是否已被内置 YAML 规则或通道矩阵直接覆盖（含其父级容器目录）"""
+        norm = normalize_path(dirpath)
+        for cov in self._covered_prefixes:
+            if norm == cov or norm.startswith(cov + os.sep) or cov.startswith(norm + os.sep):
+                return True
+        return False
+
+    @staticmethod
+    def _read_info_plist(plist_path: str) -> Optional[Dict[str, Any]]:
+        """安全读取 XML / Binary Info.plist"""
+        try:
+            with open(plist_path, "rb") as f:
+                data = plistlib.load(f)
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def build_installed_apps_index(self) -> Tuple[Dict[str, InstalledAppInfo], Dict[str, InstalledAppInfo]]:
+        """遍历应用目录构建本地 .app 的 Bundle ID 与应用名索引"""
+        if self._apps_indexed:
+            return self._bundle_index, self._name_index
+
+        bundle_idx: Dict[str, InstalledAppInfo] = {}
+        name_idx: Dict[str, InstalledAppInfo] = {}
+
+        def _scan_app_dir(directory: str, depth: int):
+            if depth > 2 or not os.path.isdir(directory):
+                return
+            try:
+                with os.scandir(directory) as it:
+                    for entry in it:
+                        if not entry.is_dir(follow_symlinks=True):
+                            continue
+                        if entry.name.endswith(".app"):
+                            app_stem = entry.name[:-4]
+                            plist_path = os.path.join(entry.path, "Contents", "Info.plist")
+                            plist_data = self._read_info_plist(plist_path) if os.path.isfile(plist_path) else None
+                            bid = ""
+                            exe = ""
+                            disp = ""
+                            cf_name = ""
+                            if plist_data:
+                                bid = str(plist_data.get("CFBundleIdentifier") or "").strip()
+                                exe = str(plist_data.get("CFBundleExecutable") or "").strip()
+                                disp = str(plist_data.get("CFBundleDisplayName") or "").strip()
+                                cf_name = str(plist_data.get("CFBundleName") or "").strip()
+
+                            info = InstalledAppInfo(
+                                name=disp or cf_name or app_stem,
+                                app_path=entry.path,
+                                bundle_id=bid,
+                                executable=exe,
+                                display_name=app_stem,
+                            )
+                            if bid:
+                                bundle_idx[bid.lower()] = info
+                            for alias in (app_stem, disp, cf_name, exe):
+                                if alias:
+                                    nkey = self._normalize_key(alias)
+                                    if nkey and nkey not in name_idx:
+                                        name_idx[nkey] = info
+                        elif depth < 2 and not entry.name.startswith("."):
+                            _scan_app_dir(entry.path, depth + 1)
+            except OSError:
+                pass
+
+        for raw_app_dir in self.app_dirs:
+            _scan_app_dir(normalize_path(raw_app_dir), 0)
+
+        self._bundle_index = bundle_idx
+        self._name_index = name_idx
+        self._apps_indexed = True
+        return bundle_idx, name_idx
+
+    def _get_process_snapshot(self) -> List[str]:
+        """获取当前活跃进程命令快照（每个扫描周期仅采集一次）"""
+        if self._injected_processes is not None:
+            return self._injected_processes
+        if self._process_snapshot is not None:
+            return self._process_snapshot
+        procs: List[str] = []
+        try:
+            res = subprocess.run(["ps", "-eo", "comm="], capture_output=True, text=True, timeout=3)
+            if res.returncode == 0:
+                procs = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+        except Exception:
+            procs = []
+        self._process_snapshot = procs
+        return procs
+
+    def _is_process_active(self, candidates: List[str]) -> bool:
+        """核对候选应用名或可执行名是否在活跃进程快照中"""
+        procs = self._get_process_snapshot()
+        if not procs:
+            return False
+        lowered_procs = [p.lower() for p in procs]
+        for cand in candidates:
+            if not cand or len(cand) < 2:
+                continue
+            cl = cand.lower()
+            for pl in lowered_procs:
+                base = os.path.basename(pl)
+                if cl == base or cl in pl:
+                    return True
+        return False
+
+    def _has_active_lock(self, dirpath: str) -> bool:
+        """检查目录下是否存在运行锁文件/套接字"""
+        for lock_name in self.LOCK_INDICATORS:
+            if lock_name.startswith("."):
+                try:
+                    with os.scandir(dirpath) as it:
+                        for entry in it:
+                            if entry.name.endswith(lock_name):
+                                return True
+                except OSError:
+                    pass
+            else:
+                if os.path.lexists(os.path.join(dirpath, lock_name)):
+                    return True
+        return False
+
+    def _is_bundle_id_installed(self, bundle_id: str) -> Optional[InstalledAppInfo]:
+        """检查 Bundle ID 是否对应已安装的本地应用（支持直连、辅助后缀前缀匹配及 Spotlight 查询）"""
+        if not bundle_id:
+            return None
+        bundle_idx, _ = self.build_installed_apps_index()
+        low = bundle_id.lower()
+        if low in bundle_idx:
+            return bundle_idx[low]
+
+        # 辅助组件/启动器 Bundle ID 前缀回溯（例如 com.google.GeminiMacOS.launcher -> com.google.GeminiMacOS）
+        for installed_bid, info in bundle_idx.items():
+            if low.startswith(installed_bid + "."):
+                return info
+
+        if not self.use_spotlight:
+            return None
+
+        if low in self._spotlight_cache:
+            if self._spotlight_cache[low]:
+                return InstalledAppInfo(name=bundle_id, app_path="", bundle_id=bundle_id)
+            return None
+
+        found = False
+        app_path = ""
+        try:
+            res = subprocess.run(
+                ["mdfind", f"kMDItemCFBundleIdentifier == '{bundle_id}'"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                found = True
+                app_path = res.stdout.strip().splitlines()[0].strip()
+        except Exception:
+            found = False
+
+        self._spotlight_cache[low] = found
+        if found:
+            app_name = os.path.basename(app_path)[:-4] if app_path.endswith(".app") else bundle_id
+            return InstalledAppInfo(name=app_name, app_path=app_path, bundle_id=bundle_id)
+        return None
+
+    def _probe_tier1_plist(self, dirpath: str) -> Optional[Tuple[str, str, str]]:
+        """
+        一级反查：扫描目录下 Info.plist 或反向域名 (CFBundleIdentifier) 目录名
+        返回: (bundle_id, app_name, executable) 或 None
+        """
+        plist_candidates: List[str] = [
+            os.path.join(dirpath, "Info.plist"),
+            os.path.join(dirpath, "Contents", "Info.plist"),
+        ]
+        try:
+            with os.scandir(dirpath) as it:
+                for entry in it:
+                    if entry.is_dir(follow_symlinks=False) and not entry.name.startswith("."):
+                        plist_candidates.append(os.path.join(entry.path, "Info.plist"))
+                        plist_candidates.append(os.path.join(entry.path, "Contents", "Info.plist"))
+                    elif entry.is_file(follow_symlinks=False) and entry.name.endswith(".plist"):
+                        plist_candidates.append(entry.path)
+        except OSError:
+            pass
+
+        for plist_path in plist_candidates:
+            if not os.path.isfile(plist_path):
+                continue
+            data = self._read_info_plist(plist_path)
+            if not data:
+                continue
+            bid = str(data.get("CFBundleIdentifier") or "").strip()
+            if not bid:
+                continue
+            app_name = str(
+                data.get("CFBundleDisplayName")
+                or data.get("CFBundleName")
+                or data.get("CFBundleExecutable")
+                or bid
+            ).strip()
+            exe = str(data.get("CFBundleExecutable") or "").strip()
+            return bid, app_name, exe
+
+        base = os.path.basename(dirpath)
+        if self.BUNDLE_ID_REGEX.match(base) and not base.lower().startswith("com.apple."):
+            sig = self.signatures.get(base.lower())
+            app_name = sig["app_name"] if sig else base
+            return base, app_name, ""
+
+        return None
+
+    @classmethod
+    def get_last_access_and_idle_days(
+        cls,
+        dirpath: str,
+        now_ts: float,
+        max_entries: int = 300,
+    ) -> Tuple[Optional[float], Optional[int]]:
+        """
+        计算目录及其浅层条目的最近访问/修改时间戳 (max(mtime, atime)) 与闲置天数。
+        在调用 scandir 前先记录根目录 lstat，避免扫描本身污染目录 atime。
+        """
+        try:
+            root_st = os.lstat(dirpath)
+        except OSError:
+            return None, None
+
+        latest_ts = max(root_st.st_mtime, root_st.st_atime)
+        checked = 0
+        stack = [dirpath]
+
+        try:
+            while stack and checked < max_entries:
+                current = stack.pop()
+                try:
+                    with os.scandir(current) as it:
+                        for entry in it:
+                            checked += 1
+                            if checked > max_entries:
+                                break
+                            try:
+                                st = entry.stat(follow_symlinks=False)
+                                latest_ts = max(latest_ts, st.st_mtime, st.st_atime)
+                            except OSError:
+                                pass
+                            if entry.is_dir(follow_symlinks=False) and current == dirpath:
+                                stack.append(entry.path)
+                except OSError:
+                    continue
+        except OSError:
+            pass
+
+        idle_days = max(0, int((now_ts - latest_ts) // 86400))
+        return latest_ts, idle_days
+
+    def resolve_directory(self, dirpath: str) -> AssociationResult:
+        """
+        对单个候选数据目录执行三级反向映射推导:
+          Tier 1 -> Info.plist / CFBundleIdentifier
+          Tier 2 -> 内置高频特征字典 (KNOWN_APP_SIGNATURES)
+          Tier 3 -> 逆向启发式探测 (无对应应用/进程且超过 180 天未访问)
+        """
+        norm = normalize_path(dirpath)
+        dir_name = os.path.basename(norm)
+        now_ts = self.now if self.now is not None else time.time()
+
+        # 前置安全与系统红线过滤
+        is_redline, redline_reason = is_system_redline_path(norm)
+        if is_redline:
+            return AssociationResult(norm, dir_name, None, "protected", "skipped", reason=redline_reason)
+
+        is_safe, safety_reason = validate_target_safety(norm)
+        if not is_safe:
+            return AssociationResult(norm, dir_name, None, "protected", "skipped", reason=safety_reason)
+
+        if (
+            dir_name in RootOrphanScanner.IGNORED_ROOT_ENTRIES
+            or dir_name in RootOrphanScanner.MACOS_SYSTEM_APP_SUPPORT_DIRS
+            or dir_name in self.SHARED_INFRA_DIRS
+            or dir_name.startswith(".")
+            or dir_name.startswith("com.apple.")
+            or RootOrphanScanner.ABNORMAL_NAME_REGEX.match(dir_name)
+        ):
+            return AssociationResult(norm, dir_name, None, "protected", "skipped", reason="系统/共享框架或已由 RootOrphanScanner 覆盖")
+
+        if self._is_covered_by_rules(norm):
+            return AssociationResult(norm, dir_name, None, "protected", "skipped", reason="已由内置 YAML 规则或通道矩阵直接覆盖")
+
+        is_skeleton, _, _ = RootOrphanScanner.inspect_skeleton_dir(norm)
+        if is_skeleton:
+            return AssociationResult(norm, dir_name, None, "protected", "skipped", reason="骨架空目录已归属 RootOrphanScanner L1")
+
+        bundle_idx, name_idx = self.build_installed_apps_index()
+        _, idle_days = self.get_last_access_and_idle_days(norm, now_ts)
+
+        # ── 一级 (Tier 1): Info.plist / CFBundleIdentifier 反查 ──────────────────────────
+        t1 = self._probe_tier1_plist(norm)
+        if t1 is not None:
+            bid, app_name, exe = t1
+            matched_app = self._is_bundle_id_installed(bid)
+            sig = self.signatures.get(bid.lower())
+            if matched_app is None and app_name and app_name != bid:
+                matched_app = name_idx.get(self._normalize_key(app_name))
+            if matched_app is None and sig is not None:
+                for alt_bid in sig.get("bundle_ids", []):
+                    matched_app = self._is_bundle_id_installed(alt_bid)
+                    if matched_app is not None:
+                        break
+                if matched_app is None:
+                    for ap in sig.get("app_paths", []):
+                        if ap and os.path.exists(normalize_path(ap)):
+                            matched_app = InstalledAppInfo(name=sig["app_name"], app_path=normalize_path(ap), bundle_id=bid)
+                            break
+
+            proc_candidates = [
+                c for c in (
+                    app_name,
+                    exe,
+                    matched_app.name if matched_app else "",
+                    matched_app.executable if matched_app else "",
+                    *(sig.get("process_names", []) if sig else []),
+                )
+                if c
+            ]
+            if self._is_process_active(proc_candidates) or self._has_active_lock(norm):
+                return AssociationResult(
+                    norm, dir_name, 1, "plist_bundle_id", "running",
+                    app_name=matched_app.name if matched_app else app_name,
+                    bundle_id=bid,
+                    inactive_days=idle_days,
+                    reason=f"一级 Plist/BundleID ({bid}) 命中运行中应用",
+                )
+            if matched_app is not None:
+                return AssociationResult(
+                    norm, dir_name, 1, "plist_bundle_id", "installed",
+                    app_name=matched_app.name,
+                    bundle_id=bid,
+                    inactive_days=idle_days,
+                    reason=f"一级 Plist/BundleID ({bid}) 关联至已安装应用 {matched_app.name}",
+                )
+            return AssociationResult(
+                norm, dir_name, 1, "plist_bundle_id", "orphaned",
+                app_name=app_name,
+                bundle_id=bid,
+                inactive_days=idle_days,
+                reason=f"一级反向映射 (Info.plist / CFBundleIdentifier: {bid}) 判定应用 [{app_name}] 已卸载",
+            )
+
+        # ── 二级 (Tier 2): 内置高频特征字典反查 ───────────────────────────────────────
+        sig = self.signatures.get(dir_name.lower())
+        if sig is not None:
+            sig_app_name = sig["app_name"]
+            sig_bids = sig.get("bundle_ids", [])
+            sig_app_paths = sig.get("app_paths", [])
+            sig_procs = sig.get("process_names", [])
+
+            matched_app = None
+            matched_bid = sig_bids[0] if sig_bids else ""
+            for bid in sig_bids:
+                found = self._is_bundle_id_installed(bid)
+                if found is not None:
+                    matched_app = found
+                    matched_bid = bid
+                    break
+
+            app_path_exists = any(os.path.exists(normalize_path(ap)) for ap in sig_app_paths if ap)
+            proc_candidates = list(sig_procs) + [sig_app_name]
+            if self._is_process_active(proc_candidates) or self._has_active_lock(norm):
+                return AssociationResult(
+                    norm, dir_name, 2, "signature_db", "running",
+                    app_name=sig_app_name,
+                    bundle_id=matched_bid or None,
+                    inactive_days=idle_days,
+                    reason=f"二级特征字典关联 [{sig_app_name}] 正在运行中",
+                )
+            if matched_app is not None or app_path_exists:
+                return AssociationResult(
+                    norm, dir_name, 2, "signature_db", "installed",
+                    app_name=matched_app.name if matched_app else sig_app_name,
+                    bundle_id=matched_bid or None,
+                    inactive_days=idle_days,
+                    reason=f"二级特征字典关联至已安装应用 [{sig_app_name}]",
+                )
+            return AssociationResult(
+                norm, dir_name, 2, "signature_db", "orphaned",
+                app_name=sig_app_name,
+                bundle_id=matched_bid or None,
+                inactive_days=idle_days,
+                reason=f"二级特征字典反向映射：目录 [{dir_name}] 对应应用 [{sig_app_name}] 已卸载",
+            )
+
+        # ── 三级 (Tier 3): 启发式探测（应用名归一化反查 + 进程追踪 + >180 天未访问）───
+        norm_dir_key = self._normalize_key(dir_name)
+        matched_by_name = name_idx.get(norm_dir_key) if norm_dir_key else None
+        if matched_by_name is None and norm_dir_key and len(norm_dir_key) >= 4:
+            for app_key, app_info in name_idx.items():
+                if len(app_key) >= 4 and (norm_dir_key == app_key or (len(norm_dir_key) >= 6 and (norm_dir_key in app_key or app_key in norm_dir_key))):
+                    matched_by_name = app_info
+                    break
+
+        proc_probe_names = [dir_name]
+        if matched_by_name is not None:
+            proc_probe_names.extend([matched_by_name.name, matched_by_name.executable, matched_by_name.display_name])
+
+        if self._is_process_active(proc_probe_names) or self._has_active_lock(norm):
+            return AssociationResult(
+                norm, dir_name, 3, "heuristic", "running",
+                app_name=matched_by_name.name if matched_by_name else dir_name,
+                bundle_id=matched_by_name.bundle_id if matched_by_name else None,
+                inactive_days=idle_days,
+                reason=f"三级启发式探测到活跃进程或锁文件 ({dir_name})",
+            )
+
+        if matched_by_name is not None:
+            return AssociationResult(
+                norm, dir_name, 3, "heuristic", "installed",
+                app_name=matched_by_name.name,
+                bundle_id=matched_by_name.bundle_id or None,
+                inactive_days=idle_days,
+                reason=f"三级名称归一化匹配到已安装应用 [{matched_by_name.name}]",
+            )
+
+        if idle_days is not None and idle_days >= self.stale_days:
+            return AssociationResult(
+                norm, dir_name, 3, "heuristic", "orphaned",
+                app_name=dir_name,
+                bundle_id=None,
+                inactive_days=idle_days,
+                reason=f"三级启发式探测：无对应已安装应用或活跃进程，且已超过 {idle_days} 天未被访问 (阈值 {self.stale_days} 天)",
+            )
+
+        return AssociationResult(
+            norm, dir_name, 3, "heuristic", "active_unknown",
+            app_name=dir_name,
+            inactive_days=idle_days,
+            reason=f"近期仍有访问记录 ({idle_days if idle_days is not None else 0} 天前)，安全跳过",
+        )
+
+    def scan(self) -> ToolScanReport:
+        """执行三级反向映射孤儿目录扫描"""
+        targets: List[TargetMatch] = []
+        detection_matches: List[str] = []
+        seen_paths: Set[str] = set()
+
+        for raw_root in self.roots:
+            root_path = normalize_path(raw_root)
+            if not os.path.isdir(root_path):
+                continue
+            detection_matches.append(f"三级反向映射扫描: {raw_root}")
+            try:
+                with os.scandir(root_path) as it:
+                    entries = sorted(
+                        (e for e in it if e.is_dir(follow_symlinks=False)),
+                        key=lambda e: e.name,
+                    )
+            except OSError:
+                continue
+
+            for entry in entries:
+                if entry.path in seen_paths:
+                    continue
+                res = self.resolve_directory(entry.path)
+                if res.status != "orphaned":
+                    continue
+
+                size_bytes, file_count = ChannelRedundancyScanner._compute_path_size_and_count(entry.path)
+                risk_lvl, is_safe, safety_reason = assess_risk_level(
+                    target_path=entry.path,
+                    software_status="orphaned",
+                    category="data_and_history",
+                )
+                if not is_safe or risk_lvl == RiskLevel.L4_DANGER:
+                    continue
+
+                seen_paths.add(entry.path)
+                targets.append(TargetMatch(
+                    category="data_and_history",
+                    raw_path=entry.path,
+                    resolved_path=entry.path,
+                    description=res.reason,
+                    size_bytes=size_bytes,
+                    file_count=file_count,
+                    contains_secrets=False,
+                    is_model_weight=False,
+                    default_selected=True,
+                    is_safe=is_safe,
+                    safety_reason=safety_reason,
+                    risk_level=risk_lvl.value if isinstance(risk_lvl, RiskLevel) else str(risk_lvl),
+                    prunable=False,
+                    regenerable=False,
+                    inactive_days=res.inactive_days,
+                    tool_id="orphan-associations",
+                    tool_name=res.app_name or entry.name,
+                    association_tier=res.tier,
+                    association_method=res.method,
+                    associated_app=res.app_name,
+                    associated_bundle_id=res.bundle_id,
+                ))
+
+        total_size = sum(t.size_bytes for t in targets)
+        safe_size = sum(t.size_bytes for t in targets if t.is_safe)
+
+        return ToolScanReport(
+            tool_id="orphan-associations",
+            name="孤儿目录反向映射 (Association Engine)",
+            category="other",
+            vendor="Three-Tier Reverse Association",
+            homepage="",
+            status="orphaned" if targets else "clean",
+            detection_matches=detection_matches,
+            targets=targets,
+            total_size_bytes=total_size,
+            safe_size_bytes=safe_size,
+            model_weight_size_bytes=0,
+        )
+
+
 class RuleScanner:
     def __init__(self, rules_dir: Optional[str] = None):
         self.rules_dirs = []
@@ -1486,8 +2402,9 @@ class RuleScanner:
         filter_ids: Optional[List[str]] = None,
         include_root_orphans: bool = True,
         include_channel_redundancy: bool = True,
+        include_associations: bool = True,
     ) -> List[ToolScanReport]:
-        """扫描所有规则，并默认联动 RootOrphanScanner 与 ChannelRedundancyScanner"""
+        """扫描所有规则，并默认联动 RootOrphanScanner、ChannelRedundancyScanner 与 AssociationEngine"""
         all_rules = self.load_rules()
         rules = [r for r in all_rules if not filter_ids or r.get("id") in filter_ids]
         reports = []
@@ -1499,5 +2416,8 @@ class RuleScanner:
 
         if include_channel_redundancy and (filter_ids is None or "channel-redundancy" in filter_ids):
             reports.append(ChannelRedundancyScanner(rules=all_rules, use_builtin_defaults=True).scan())
+
+        if include_associations and (filter_ids is None or "orphan-associations" in filter_ids):
+            reports.append(AssociationEngine(rules=all_rules).scan())
 
         return reports

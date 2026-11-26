@@ -170,4 +170,21 @@ def get_channel_badge(channel_name: Optional[str] = None, inactive_days: Optiona
     return c(f" 🏝️[停用测试通道·{channel_name.upper()}{days_part}]", Color.BOLD, Color.BRIGHT_YELLOW)
 
 
+def get_association_badge(
+    association_tier: Optional[int] = None,
+    associated_app: Optional[str] = None,
+    inactive_days: Optional[int] = None,
+) -> str:
+    """获取三级反向映射孤儿推导徽标 (Plist / 特征字典 / 启发式)"""
+    if not association_tier:
+        return ""
+    app_label = associated_app or "未知应用"
+    if association_tier == 1:
+        return c(f" 🔗[L1 Plist反查·{app_label}]", Color.BOLD, Color.BRIGHT_CYAN)
+    if association_tier == 2:
+        return c(f" 🔗[L2 特征库·{app_label}]", Color.BOLD, Color.BRIGHT_YELLOW)
+    days_part = f"·{inactive_days}天未访问" if inactive_days is not None else ""
+    return c(f" 🕰️[L3 启发式孤儿{days_part}]", Color.BOLD, Color.YELLOW)
+
+
 

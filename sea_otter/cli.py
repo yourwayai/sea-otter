@@ -8,13 +8,21 @@ import json
 import argparse
 from typing import List, Optional
 
-from sea_otter.scanner import RuleScanner, RootOrphanScanner, ChannelRedundancyScanner, ToolScanReport, TargetMatch
+from sea_otter.scanner import (
+    RuleScanner,
+    RootOrphanScanner,
+    ChannelRedundancyScanner,
+    AssociationEngine,
+    ToolScanReport,
+    TargetMatch,
+)
 from sea_otter.cleaner import SafeCleaner, QuarantineManager
 from sea_otter.safety import RiskLevel
 from sea_otter.validator import validate_rule_schema_v12
 from sea_otter.ui import (
     c, Color, format_size, print_banner, get_status_badge, get_risk_badge,
-    get_model_badge, get_prunable_badge, get_ghost_badge, get_channel_badge, CATEGORY_NAMES
+    get_model_badge, get_prunable_badge, get_ghost_badge, get_channel_badge,
+    get_association_badge, CATEGORY_NAMES
 )
 
 def cmd_scan(args, scanner: RuleScanner):
@@ -27,6 +35,7 @@ def cmd_scan(args, scanner: RuleScanner):
     only_slim = getattr(args, "slim", False)
     only_ghosts = getattr(args, "ghosts", False)
     only_channels = getattr(args, "channels", False)
+    only_associations = getattr(args, "associations", False)
 
     if only_ghosts and not tools_filter:
         ghost_rules = [r for r in scanner.load_rules() if "ghost_rules" in r]
@@ -35,6 +44,9 @@ def cmd_scan(args, scanner: RuleScanner):
     elif only_channels and not tools_filter:
         all_rules = scanner.load_rules()
         reports = [ChannelRedundancyScanner(rules=all_rules, use_builtin_defaults=True).scan()]
+    elif only_associations and not tools_filter:
+        all_rules = scanner.load_rules()
+        reports = [AssociationEngine(rules=all_rules).scan()]
     else:
         reports = scanner.scan_all(filter_ids=tools_filter)
     if only_models:
@@ -71,6 +83,12 @@ def cmd_scan(args, scanner: RuleScanner):
             r.total_size_bytes = sum(t.size_bytes for t in r.targets)
             r.safe_size_bytes = sum(t.size_bytes for t in r.targets if t.is_safe)
             r.model_weight_size_bytes = 0
+    elif only_associations:
+        for r in reports:
+            r.targets = [t for t in r.targets if t.association_tier is not None]
+            r.total_size_bytes = sum(t.size_bytes for t in r.targets)
+            r.safe_size_bytes = sum(t.size_bytes for t in r.targets if t.is_safe)
+            r.model_weight_size_bytes = 0
 
     if args.json:
         # JSON 格式输出，方便集成外部工具 (如 Raycast 插件)
@@ -104,6 +122,10 @@ def cmd_scan(args, scanner: RuleScanner):
                         "ghost_type": t.ghost_type,
                         "channel_name": t.channel_name,
                         "inactive_days": t.inactive_days,
+                        "association_tier": t.association_tier,
+                        "association_method": t.association_method,
+                        "associated_app": t.associated_app,
+                        "associated_bundle_id": t.associated_bundle_id,
                         "risk_level": t.risk_level,
                         "default_selected": t.default_selected,
                         "is_safe": t.is_safe,
@@ -143,6 +165,8 @@ def cmd_scan(args, scanner: RuleScanner):
         print(c("👻 正在扫描存储根目录散落文件、幽灵目录与骨架空目录...", Color.BOLD, Color.BRIGHT_GREEN))
     elif only_channels:
         print(c("🏝️ 正在执行浏览器与 IDE 多通道发布孤岛交叉检测 (Channel Cross-Check)...", Color.BOLD, Color.BRIGHT_YELLOW))
+    elif only_associations:
+        print(c("🔗 正在执行应用名与路径脱节的三级反向映射孤儿扫描 (Association Engine)...", Color.BOLD, Color.BRIGHT_CYAN))
     else:
         print(c("🔍 正在扫描系统中的 AI 开发者工具与 Agent 残留...", Color.BOLD))
     print()
@@ -170,9 +194,10 @@ def cmd_scan(args, scanner: RuleScanner):
                 prune_badge = get_prunable_badge(t.prunable, t.resolved_path, t.description)
                 ghost_badge = get_ghost_badge(t.ghost_type, t.category)
                 channel_badge = get_channel_badge(t.channel_name, t.inactive_days)
+                assoc_badge = get_association_badge(t.association_tier, t.associated_app, t.inactive_days)
                 safety_badge = "" if t.is_safe else c(f" ⚠️[{t.safety_reason}]", Color.BOLD, Color.BRIGHT_RED)
                 
-                print(f"     • [{c(cat_desc, Color.MAGENTA)}] {risk_badge} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_badge}{model_badge}{prune_badge}{ghost_badge}{channel_badge}{safety_badge}")
+                print(f"     • [{c(cat_desc, Color.MAGENTA)}] {risk_badge} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_badge}{model_badge}{prune_badge}{ghost_badge}{channel_badge}{assoc_badge}{safety_badge}")
                 if t.description:
                     desc_text = t.description
                     if t.model_name and t.model_name not in desc_text:
@@ -220,6 +245,7 @@ def cmd_clean(args, scanner: RuleScanner):
     slim_mode = getattr(args, "slim", False)
     only_ghosts = getattr(args, "ghosts", False)
     only_channels = getattr(args, "channels", False)
+    only_associations = getattr(args, "associations", False)
 
     if only_ghosts and not tools_filter:
         ghost_rules = [r for r in scanner.load_rules() if "ghost_rules" in r]
@@ -228,6 +254,9 @@ def cmd_clean(args, scanner: RuleScanner):
     elif only_channels and not tools_filter:
         all_rules = scanner.load_rules()
         reports = [ChannelRedundancyScanner(rules=all_rules, use_builtin_defaults=True).scan()]
+    elif only_associations and not tools_filter:
+        all_rules = scanner.load_rules()
+        reports = [AssociationEngine(rules=all_rules).scan()]
     else:
         reports = scanner.scan_all(filter_ids=tools_filter)
 
@@ -248,6 +277,9 @@ def cmd_clean(args, scanner: RuleScanner):
         print()
     elif only_channels:
         print(c("🏝️ [多通道发布孤岛清理模式]：主通道活跃使用中，一键清理超过 90 天未启动的停用测试通道 (Canary/Dev/Beta)", Color.BOLD, Color.BRIGHT_YELLOW))
+        print()
+    elif only_associations:
+        print(c("🔗 [三级反向映射孤儿清理模式]：专项清理通过 Plist / 特征字典 / 启发式推导确认的已卸载应用残留", Color.BOLD, Color.BRIGHT_CYAN))
         print()
 
     # 筛选待清理目标
@@ -276,6 +308,10 @@ def cmd_clean(args, scanner: RuleScanner):
 
             # 专项多通道测试孤岛过滤
             if only_channels and t.channel_name is None:
+                continue
+
+            # 专项三级反向映射孤儿过滤
+            if only_associations and t.association_tier is None:
                 continue
 
             # 专项安全减负模式过滤
@@ -338,7 +374,8 @@ def cmd_clean(args, scanner: RuleScanner):
         prune_mark = f" {get_prunable_badge(t.prunable, t.resolved_path, t.description)}" if (t.prunable and not t.is_model_weight) else ""
         ghost_mark = f" {get_ghost_badge(t.ghost_type, t.category)}" if (t.ghost_type or t.category in ["ghost", "skeleton", "locks", "temp_images"]) else ""
         channel_mark = f" {get_channel_badge(t.channel_name, t.inactive_days)}" if t.channel_name else ""
-        print(f"  [{c(CATEGORY_NAMES.get(t.category, t.category), Color.MAGENTA)}] {risk_mark}{model_mark}{prune_mark}{ghost_mark}{channel_mark} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_mark}")
+        assoc_mark = f" {get_association_badge(t.association_tier, t.associated_app, t.inactive_days)}" if t.association_tier else ""
+        print(f"  [{c(CATEGORY_NAMES.get(t.category, t.category), Color.MAGENTA)}] {risk_mark}{model_mark}{prune_mark}{ghost_mark}{channel_mark}{assoc_mark} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_mark}")
         if t.model_name:
             print(f"    {c(f'🧠 模型/向量库: {t.model_name} (可独立修剪/不破坏宿主主配置)', Color.CYAN)}")
         print(f"    {c(t.description, Color.DIM)}")
@@ -697,6 +734,7 @@ def main():
     p_scan.add_argument("-s", "--slim", action="store_true", help="仅查看支持安全减负的目标项 (会话大附件、向量嵌入库、缓存)")
     p_scan.add_argument("-g", "--ghosts", action="store_true", help="仅扫描根目录散落文件、幽灵目录与骨架空目录 (L1 极低风险)")
     p_scan.add_argument("-C", "--channels", action="store_true", help="仅检测多通道发布孤岛 (如超过 90 天未用的 Canary/Dev/Beta 测试通道)")
+    p_scan.add_argument("-A", "--associations", action="store_true", help="仅检测应用名与路径脱节的三级反向映射孤儿目录")
     p_scan.add_argument("--json", action="store_true", help="以 JSON 格式输出扫描结果")
 
     # clean
@@ -707,6 +745,7 @@ def main():
     p_clean.add_argument("-s", "--slim", action="store_true", help="安全减负模式：保留主配置与核心对话，仅清理会话大附件、过期向量嵌入库与各类缓存")
     p_clean.add_argument("-g", "--ghosts", action="store_true", help="专项清理根目录散落文件、幽灵目录与骨架空目录 (L1 极低风险)")
     p_clean.add_argument("-C", "--channels", action="store_true", help="专项清理停用超过 90 天的测试通道孤岛 (Canary/Dev/Beta)")
+    p_clean.add_argument("-A", "--associations", action="store_true", help="专项清理三级反向映射引擎推导的已卸载应用孤儿目录")
     p_clean.add_argument("-n", "--dry-run", action="store_true", help="只读模式，仅预览待清理目标与空间，不进行实际移动")
     p_clean.add_argument("--include-l3", action="store_true", help="允许清理 L3 在用软件减负项 (如正在使用的端侧大模型、本地缓存)，默认安全跳过保护")
     p_clean.add_argument("--include-secrets", action="store_true", help="允许清理敏感凭证 (如 Token/API 密钥)，默认安全跳过")

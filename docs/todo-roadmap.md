@@ -1,22 +1,23 @@
 # Sea-Otter (DevSweep) 演进路线与待办清单 (Optimization Backlog)
 
 > **版本定位**：基于 [architecture-and-lessons-learned.md](architecture-and-lessons-learned.md) (v1.2 Milestone Release) 实战指南提炼，记录项目后续的迭代规划与具体待办项。  
-> **更新状态**：已完成前 8 项（四级安全防护矩阵、端侧大模型识别引擎、本地会话与向量裁剪、Schema v1.2 规范与校验、根目录散落与幽灵探测、多通道发布孤岛检测、原子隔离区与一键无损回滚、官方规则库第一轮扩充），**P0 与 P1 阶段全部圆满达成 🎉**，剩余 **4 项 P2 演进任务** 如下。
+> **更新状态**：已完成前 9 项（四级安全防护矩阵、端侧大模型识别引擎、本地会话与向量裁剪、Schema v1.2 规范与校验、根目录散落与幽灵探测、多通道发布孤岛检测、原子隔离区与一键无损回滚、官方规则库第一轮扩充、三级反向映射引擎），**P0 与 P1 阶段全部圆满达成 🎉，P2 阶段已完成 1 项**，剩余 **3 项 P2 演进任务** 如下。
 
 ---
 
 ## 📋 待办进度看板 (Kanban)
 
 ```
-[ 已完成 (8) ] ──────────> [ 进行中 (0) ] ──────────> [ 待开始 (4) ]
+[ 已完成 (9) ] ──────────> [ 进行中 (0) ] ──────────> [ 待开始 (3) ]
 • 四级安全矩阵 (L1~L4)                                 • P0 阶段: 0 项 (全部达成!)
 • 端侧大模型引擎 (AIModelScanner)                      • P1 阶段: 0 项 (全部达成!)
-• 细粒度会话与向量裁剪 (Slim Mode)                     • P2 阶段: 4 项
+• 细粒度会话与向量裁剪 (Slim Mode)                     • P2 阶段: 3 项
 • 规则 Schema v1.2 规范与校验 (Validator)
 • 根目录散落与幽灵探测 (RootOrphanScanner)
 • 多通道发布孤岛检测 (ChannelRedundancyScanner)
 • 原子隔离与无损回滚 (Quarantine & Rollback)
 • 官方规则库第一轮扩充 (Chrome/Edge/微信/飞书/VSCode)
+• 三级反向映射引擎 (AssociationEngine)
 ```
 
 ---
@@ -131,14 +132,16 @@
 
 ## 阶段三：P2 生态扩展、反向推导与体验演进（长效价值）
 
-### [ ] Task 08: 应用名与路径脱节的三级反向映射引擎 (Association Engine)
+### [x] Task 08: 应用名与路径脱节的三级反向映射引擎 (Association Engine)
 * **痛点/价值**：解决“应用叫 VS Code，目录叫 Code；应用叫 ChatGPT，目录叫 com.openai.chat”导致的 79+ 款已卸载历史应用漏报难题。
 * **涉及模块**：
-  * `sea_otter/scanner.py`（孤儿目录反向推导算法）
-* **验收标准**：
-  1. 一级：通过目录下 `Info.plist` / `CFBundleIdentifier` 反查应用；
-  2. 二级：内置已知高频特征字典反查；
-  3. 三级：启发式探测（无对应应用且超过 180 天未被任何进程访问）。
+  * `sea_otter/scanner.py`（实现 `AssociationEngine` 三级反向映射引擎，并接入 `RuleScanner.scan_all` 与去重）
+  * `sea_otter/ui.py` & `sea_otter/cli.py`（新增 `get_association_badge` 与 `scan/clean -A --associations` 专项模式）
+* **验收结果**：
+  1. ✅ 一级：通过目录下 `Info.plist` / `CFBundleIdentifier` 及辅助启动器前缀回溯反查本地应用；
+  2. ✅ 二级：内置 40+ 款高频脱节目录特征字典（如 `Code`、`com.openai.chat`、`Telegram Desktop`、`byteexec`、`IBKR Desktop`、`Lingma` 等）反查并交叉核对进程锁；
+  3. ✅ 三级：启发式探测（归一化应用名匹配 + 进程追踪 + 超过 180 天未被任何进程访问），自动排除 macOS 原生目录与规则已覆盖目录；
+  4. ✅ 经实机扫描验证与单元测试全覆盖（共 56 项测试全数通过）。
 
 ---
 
