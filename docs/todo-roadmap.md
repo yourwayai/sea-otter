@@ -1,17 +1,17 @@
 # Sea-Otter (DevSweep) 演进路线与待办清单 (Optimization Backlog)
 
 > **版本定位**：基于 [architecture-and-lessons-learned.md](architecture-and-lessons-learned.md) (v1.2 Milestone Release) 实战指南提炼，记录项目后续的迭代规划与具体待办项。  
-> **更新状态**：已完成前 10 项（四级安全防护矩阵、端侧大模型识别引擎、本地会话与向量裁剪、Schema v1.2 规范与校验、根目录散落与幽灵探测、多通道发布孤岛检测、原子隔离区与一键无损回滚、官方规则库第一轮扩充、三级反向映射引擎、敏感凭据深度隐私审计），**P0 与 P1 阶段全部圆满达成 🎉，P2 阶段已完成 2 项**，剩余 **2 项 P2 演进任务** 如下。
+> **更新状态**：已完成前 11 项（四级安全防护矩阵、端侧大模型识别引擎、本地会话与向量裁剪、Schema v1.2 规范与校验、根目录散落与幽灵探测、多通道发布孤岛检测、原子隔离区与一键无损回滚、官方规则库第一轮扩充、三级反向映射引擎、敏感凭据深度隐私审计、Agentic MCP Server 原生集成），**P0 与 P1 阶段全部圆满达成 🎉，P2 阶段已完成 3 项**，剩余 **1 项 P2 演进任务** 如下。
 
 ---
 
 ## 📋 待办进度看板 (Kanban)
 
 ```
-[ 已完成 (10) ] ─────────> [ 进行中 (0) ] ──────────> [ 待开始 (2) ]
+[ 已完成 (11) ] ─────────> [ 进行中 (0) ] ──────────> [ 待开始 (1) ]
 • 四级安全矩阵 (L1~L4)                                 • P0 阶段: 0 项 (全部达成!)
 • 端侧大模型引擎 (AIModelScanner)                      • P1 阶段: 0 项 (全部达成!)
-• 细粒度会话与向量裁剪 (Slim Mode)                     • P2 阶段: 2 项
+• 细粒度会话与向量裁剪 (Slim Mode)                     • P2 阶段: 1 项
 • 规则 Schema v1.2 规范与校验 (Validator)
 • 根目录散落与幽灵探测 (RootOrphanScanner)
 • 多通道发布孤岛检测 (ChannelRedundancyScanner)
@@ -19,6 +19,7 @@
 • 官方规则库第一轮扩充 (Chrome/Edge/微信/飞书/VSCode)
 • 三级反向映射引擎 (AssociationEngine)
 • 敏感凭据深度隐私审计 (SecretLeakAuditor)
+• Agentic MCP Server (sea-otter-mcp)
 ```
 
 ---
@@ -159,15 +160,16 @@
 
 ---
 
-### [ ] Task 10: Agentic MCP Server 原生接口集成
+### [x] Task 10: Agentic MCP Server 原生接口集成
 * **痛点/价值**：现代开发者通过自然语言直接在 Antigravity、Claude Code、Cursor 中与 AI 协作，工具应具备原生 Agentic 能力。
 * **涉及模块**：
-  * `sea_otter/mcp_server.py`（全新模块）
-  * `pyproject.toml`（暴露 `sea-otter-mcp` 入口）
-* **验收标准**：
-  1. 符合标准 Model Context Protocol (MCP) 规范；
-  2. 暴露 `sea_otter_scan`、`sea_otter_clean`、`sea_otter_rollback` 工具给 AI Agent 调用；
-  3. 支持在 AI 对话中直接查看空间占用与交互确认减负。
+  * `sea_otter/mcp_server.py`（零依赖实现标准 MCP JSON-RPC 2.0 over stdio 服务端）
+  * `pyproject.toml` & `setup.py`（暴露 `sea-otter-mcp` 命令入口）
+* **验收结果**：
+  1. ✅ 符合标准 Model Context Protocol (MCP) 规范（支持 `initialize`、`notifications/initialized`、`ping`、`tools/list`、`tools/call` 及换行/`Content-Length` 双传输帧）；
+  2. ✅ 暴露 `sea_otter_scan`、`sea_otter_clean`、`sea_otter_rollback` 工具给 AI Agent 调用；
+  3. ✅ `sea_otter_clean` 默认 `dry_run=true` 并强制 `dry_run=false && confirm=true` 双重确认机制，支持在 AI 对话中查看空间占用、隐私告警并交互确认减负；
+  4. ✅ 新增 MCP 协议与端到端调用测试并通过全部 64 项单元测试。
 
 ---
 

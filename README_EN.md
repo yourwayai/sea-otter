@@ -39,6 +39,7 @@ Traditional Mac cleanup apps (such as CleanMyMac or AppCleaner) typically rely o
 - 🏝️ **Multi-Channel Redundancy Cross-Check (`ChannelRedundancyScanner`, `--channels`)**: Links Chrome, Edge, and VS Code channel families; flags Canary/Dev/Beta/Insiders channels inactive for **> 90 days** while Stable is actively used.
 - 🔗 **Three-Tier Reverse Association Engine (`AssociationEngine`, `--associations`)**: Resolves decoupled app/folder names via `Info.plist` / `CFBundleIdentifier` lookup, curated signature DB (`Code` → VS Code, `com.openai.chat` → ChatGPT), and **180-day** idle heuristic probing.
 - 🔑 **Deep Secret Leak Auditing (`SecretLeakAuditor`, `--secrets`)**: Audits JSON, YAML, `.env`, PEM private keys, and read-only SQLite databases for plaintext `access_token`, `api_key`, `secret`, and `private_key` (without exposing raw values), displaying high-risk privacy badges and pre-clean backup/wipe warnings.
+- 🤖 **Native Agentic MCP Server (`sea-otter-mcp`)**: Zero-dependency Model Context Protocol (JSON-RPC 2.0 over stdio) server exposing `sea_otter_scan`, `sea_otter_clean` (with mandatory dry-run preview & confirmation guard), and `sea_otter_rollback` to Antigravity, Claude Code, and Cursor.
 - ⏪ **Atomic Quarantine & Lossless Rollback (`sea-otter rollback`)**: Archives cleaned items into `~/.Trash/AppSupport_Cleanup_<timestamp>/` with a structured `manifest.json` (v1.2.0), automatic name collision disambiguation, conflict protection, and one-command restoration.
 
 ---
@@ -105,10 +106,11 @@ sea-otter/
 │   ├── scanner.py               # RuleScanner / AIModelScanner / SecretLeakAuditor / RootOrphanScanner / ChannelRedundancyScanner / AssociationEngine
 │   ├── cleaner.py               # SafeCleaner & QuarantineManager (atomic archive & rollback)
 │   ├── validator.py             # Zero-dependency Rule Schema v1.2 validator
+│   ├── mcp_server.py            # Native Agentic MCP Server (JSON-RPC 2.0 over stdio)
 │   ├── ui.py                    # Terminal formatting & badges
 │   └── cli.py                   # CLI dispatcher & interactive console
 ├── tests/
-│   └── test_suite.py            # Automated unit test suite (61 tests)
+│   └── test_suite.py            # Automated unit test suite (64 tests)
 ├── pyproject.toml               # PEP 517 / 621 package metadata
 ├── README.md                    # Chinese Documentation
 └── README_EN.md                 # English Documentation
@@ -252,6 +254,19 @@ sea-otter rules validate
 sea-otter about
 ```
 
+### 5. Agentic MCP Server (`sea-otter-mcp`)
+Add the stdio server to Antigravity, Claude Code, or Cursor MCP configuration (`sea_otter_clean` defaults to `dry_run=true` and requires explicit `confirm=true` after user review):
+```json
+{
+  "mcpServers": {
+    "sea-otter": {
+      "command": "sea-otter-mcp"
+    }
+  }
+}
+```
+Exposed tools: `sea_otter_scan`, `sea_otter_clean`, `sea_otter_rollback`.
+
 ---
 
 ## 🗺️ Roadmap
@@ -269,7 +284,7 @@ sea-otter about
 - [ ] **Phase 3 & P2: Ecosystem Expansion & Agentic Integration**
   - [x] Three-tier reverse Association Engine for decoupled app/folder names
   - [x] Deep Secret Leak Warning for plaintext OAuth tokens and API keys
-  - [ ] Native Antigravity / Claude Code MCP Server (`sea-otter-mcp`)
+  - [x] Native Antigravity / Claude Code MCP Server (`sea-otter-mcp`)
   - [ ] Concurrent I/O scanning optimization (`os.scandir` + `ThreadPoolExecutor`)
 
 ---

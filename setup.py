@@ -21,6 +21,7 @@ setup(
     entry_points={
         "console_scripts": [
             "sea-otter=sea_otter.cli:main",
+            "sea-otter-mcp=sea_otter.mcp_server:main",
         ],
     },
     python_requires=">=3.8",

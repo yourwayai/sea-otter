@@ -42,6 +42,7 @@
 - 🏝️ **多通道发布孤岛交叉检测 (`ChannelRedundancyScanner`, `--channels`)**：自动关联 Chrome / Edge / VS Code 家族矩阵，当正式版近期高频活跃而测试通道（Canary / Dev / Beta / Insiders）超过 **90 天**未启动时，提示一键安全清理。
 - 🔗 **三级反向映射孤儿探测 (`AssociationEngine`, `--associations`)**：通过 `Info.plist` / `CFBundleIdentifier` 反查、高频脱节特征字典（如 `Code` → VS Code、`com.openai.chat` → ChatGPT）及 **180 天**无进程访问启发式推导，精准捕获已卸载历史应用残留。
 - 🔑 **敏感凭据深度隐私审计 (`SecretLeakAuditor`, `--secrets`)**：深度扫描 JSON / YAML / `.env` / PEM 私钥与只读 SQLite 中的明文 `access_token`、`api_key`、`secret`、`private_key`（绝不回显明文值），终端展示高危隐私告警并在清理前提示备份或安全抹除。
+- 🤖 **原生 Agentic MCP Server (`sea-otter-mcp`)**：零依赖实现标准 Model Context Protocol (stdio)，向 Antigravity、Claude Code、Cursor 等 Agent 暴露 `sea_otter_scan`、`sea_otter_clean`（强制 dry-run 预览与二次确认）与 `sea_otter_rollback` 工具。
 - ⏪ **原子隔离区与一键无损回滚 (`sea-otter rollback`)**：清理时自动在 `~/.Trash/AppSupport_Cleanup_<timestamp>/` 建立隔离目录并生成标准 `manifest.json`（v1.2.0），支持重名消歧、冲突保护与按会话一键无损恢复。
 
 ---
@@ -108,10 +109,11 @@ sea-otter/
 │   ├── scanner.py               # RuleScanner / AIModelScanner / SecretLeakAuditor / RootOrphanScanner / ChannelRedundancyScanner / AssociationEngine
 │   ├── cleaner.py               # SafeCleaner 与 QuarantineManager (原子隔离与无损回滚)
 │   ├── validator.py             # Rule Schema v1.2 零依赖深度校验器
+│   ├── mcp_server.py            # 原生 Agentic MCP Server (JSON-RPC 2.0 over stdio)
 │   ├── ui.py                    # 终端视觉与多维状态/风险/模型/幽灵/通道徽标
 │   └── cli.py                   # 命令行交互与子命令调度
 ├── tests/
-│   └── test_suite.py            # 自动化单元测试套件 (61 项全覆盖)
+│   └── test_suite.py            # 自动化单元测试套件 (64 项全覆盖)
 ├── pyproject.toml
 ├── setup.py
 ├── .gitignore
@@ -268,6 +270,19 @@ sea-otter rules validate
 sea-otter about
 ```
 
+### 5. Agentic MCP Server 集成 (`sea-otter-mcp`)
+可在 Antigravity、Claude Code、Cursor 等支持 MCP 的客户端配置中加入以下 stdio 服务（默认先以 `dry_run=true` 展示占用与隐私告警，需用户确认后再减负）：
+```json
+{
+  "mcpServers": {
+    "sea-otter": {
+      "command": "sea-otter-mcp"
+    }
+  }
+}
+```
+暴露工具：`sea_otter_scan`（全盘/专项体检）、`sea_otter_clean`（预览确认与安全隔离）、`sea_otter_rollback`（隔离会话列表与无损回滚）。
+
 ---
 
 ## 🚀 规划路线 (Roadmap)
@@ -285,7 +300,7 @@ sea-otter about
 - [ ] **Phase 3 & P2: 生态扩展、反向推导与 Agentic 交付**
   - [x] 应用名与存储路径脱节的三级反向映射引擎 (`Association Engine`)
   - [x] 敏感凭据与 API Key 深度隐私审计 (`Secret Leak Warning`)
-  - [ ] Antigravity / Claude Code 原生 MCP Server (`sea-otter-mcp`) 集成
+  - [x] Antigravity / Claude Code 原生 MCP Server (`sea-otter-mcp`) 集成
   - [ ] `os.scandir` + `ThreadPoolExecutor` 并发 I/O 性能优化
 
 ---

@@ -4,6 +4,7 @@ Sea-Otter Automated Test Suite
 """
 
 import os
+import io
 import shutil
 import tempfile
 import unittest
@@ -22,6 +23,7 @@ from sea_otter.scanner import (
     AssociationEngine,
     SecretLeakAuditor,
 )
+from sea_otter.mcp_server import MCPStdioServer, SeaOtterMCPService
 from sea_otter.safety import validate_target_safety, contains_workspace_or_repo, normalize_path, RiskLevel
 from sea_otter.cleaner import SafeCleaner, QuarantineManager, QUARANTINE_DIR_PREFIX
 from sea_otter.validator import validate_rule_schema_v12
@@ -1541,6 +1543,201 @@ class TestSecretLeakAuditor(unittest.TestCase):
             self.assertIn("高危隐私告警", proc_warn.stdout)
             self.assertIn("备份", proc_warn.stdout)
             self.assertIn("oauth_creds.json", proc_warn.stdout)
+
+
+class TestMCPServer(unittest.TestCase):
+    """测试 Task 10: Agentic MCP Server 原生接口集成 (JSON-RPC 2.0 over stdio)"""
+
+    def test_mcp_protocol_handshake_and_tools_list(self):
+        server = MCPStdioServer()
+
+        # 1. initialize
+        init_resp = server.handle_message({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2024-11-05", "clientInfo": {"name": "test-agent", "version": "1.0"}},
+        })
+        self.assertEqual(init_resp["id"], 1)
+        self.assertEqual(init_resp["result"]["protocolVersion"], "2024-11-05")
+        self.assertEqual(init_resp["result"]["serverInfo"]["name"], "sea-otter-mcp")
+        self.assertIn("tools", init_resp["result"]["capabilities"])
+
+        # 2. notifications/initialized (通知无 id，不返回响应)
+        notif_resp = server.handle_message({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+        })
+        self.assertIsNone(notif_resp)
+        self.assertTrue(server.initialized)
+
+        # 3. ping
+        ping_resp = server.handle_message({"jsonrpc": "2.0", "id": 2, "method": "ping"})
+        self.assertEqual(ping_resp["result"], {})
+
+        # 4. tools/list
+        list_resp = server.handle_message({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+        tools = {t["name"]: t for t in list_resp["result"]["tools"]}
+        self.assertEqual(set(tools.keys()), {"sea_otter_scan", "sea_otter_clean", "sea_otter_rollback"})
+        for tool_def in tools.values():
+            self.assertIn("description", tool_def)
+            self.assertEqual(tool_def["inputSchema"]["type"], "object")
+
+        # 5. 未知方法与未知工具错误码
+        unknown_method = server.handle_message({"jsonrpc": "2.0", "id": 4, "method": "unknown/method"})
+        self.assertEqual(unknown_method["error"]["code"], -32601)
+
+        unknown_tool = server.handle_message({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {"name": "nonexistent_tool", "arguments": {}},
+        })
+        self.assertEqual(unknown_tool["error"]["code"], -32602)
+
+    def test_mcp_scan_clean_confirm_and_rollback_e2e(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            rules_dir = os.path.join(tmp_dir, "rules")
+            trash_dir = os.path.join(tmp_dir, ".Trash")
+            app_dir = os.path.join(tmp_dir, "Users", "tester", "Library", "Application Support", "McpDemo")
+            cache_dir = os.path.join(app_dir, "Cache")
+            auth_file = os.path.join(app_dir, "oauth_creds.json")
+            os.makedirs(rules_dir)
+            os.makedirs(trash_dir)
+            os.makedirs(cache_dir)
+
+            with open(os.path.join(cache_dir, "bundle.cache"), "wb") as f:
+                f.write(b"x" * 2048)
+            with open(auth_file, "w", encoding="utf-8") as f:
+                json.dump({"access_token": "tok_mcp_demo_12345"}, f)
+
+            rule_yaml = {
+                "id": "mcp-demo",
+                "name": "MCP Demo Tool",
+                "category": "desktop-agent",
+                "vendor": "Demo",
+                "targets": {
+                    "caches": [{"path": cache_dir, "description": "可清理缓存"}],
+                    "credentials": [{"path": auth_file, "description": "OAuth 凭据", "contains_secrets": True}],
+                },
+            }
+            with open(os.path.join(rules_dir, "mcp-demo.yaml"), "w", encoding="utf-8") as f:
+                yaml.safe_dump(rule_yaml, f, allow_unicode=True)
+
+            service = SeaOtterMCPService(
+                scanner_factory=lambda: RuleScanner(rules_dir=rules_dir),
+                cleaner_factory=lambda: SafeCleaner(use_trash=True, use_quarantine=True, quarantine_base_dir=trash_dir),
+                quarantine_factory=lambda: QuarantineManager(quarantine_base_dir=trash_dir),
+            )
+            server = MCPStdioServer(service=service)
+
+            # 1. sea_otter_scan
+            scan_resp = server.handle_message({
+                "jsonrpc": "2.0",
+                "id": 10,
+                "method": "tools/call",
+                "params": {"name": "sea_otter_scan", "arguments": {"tools": ["mcp-demo"], "mode": "all"}},
+            })
+            self.assertFalse(scan_resp["result"]["isError"])
+            scan_payload = json.loads(scan_resp["result"]["content"][0]["text"])
+            self.assertGreaterEqual(scan_payload["summary"]["total_size_bytes"], 2048)
+            self.assertEqual(scan_payload["summary"]["secret_targets_count"], 1)
+
+            # 2. sea_otter_clean (dry_run=false 但 confirm=false -> 强制拦截并返回预览确认)
+            preview_resp = server.handle_message({
+                "jsonrpc": "2.0",
+                "id": 11,
+                "method": "tools/call",
+                "params": {
+                    "name": "sea_otter_clean",
+                    "arguments": {"tools": ["mcp-demo"], "dry_run": False, "confirm": False},
+                },
+            })
+            preview_payload = json.loads(preview_resp["result"]["content"][0]["text"])
+            self.assertTrue(preview_payload["is_dry_run"])
+            self.assertTrue(preview_payload["needs_confirmation"])
+            self.assertEqual(preview_payload["candidate_count"], 1)
+            self.assertEqual(preview_payload["skipped_summary"]["skipped_secrets_count"], 1)
+            self.assertTrue(os.path.exists(cache_dir))
+
+            # 3. sea_otter_clean (dry_run=false 且 confirm=true -> 归档清理缓存，凭据未授权安全跳过)
+            clean_resp = server.handle_message({
+                "jsonrpc": "2.0",
+                "id": 12,
+                "method": "tools/call",
+                "params": {
+                    "name": "sea_otter_clean",
+                    "arguments": {"tools": ["mcp-demo"], "dry_run": False, "confirm": True},
+                },
+            })
+            clean_payload = json.loads(clean_resp["result"]["content"][0]["text"])
+            self.assertFalse(clean_payload["is_dry_run"])
+            self.assertEqual(clean_payload["success_count"], 1)
+            session_id = clean_payload["session_id"]
+            self.assertIsNotNone(session_id)
+            self.assertFalse(os.path.exists(cache_dir))
+            self.assertTrue(os.path.exists(auth_file))
+
+            # 4. sea_otter_rollback list & restore
+            rb_list_resp = server.handle_message({
+                "jsonrpc": "2.0",
+                "id": 13,
+                "method": "tools/call",
+                "params": {"name": "sea_otter_rollback", "arguments": {"action": "list"}},
+            })
+            rb_list_payload = json.loads(rb_list_resp["result"]["content"][0]["text"])
+            self.assertEqual(rb_list_payload["session_count"], 1)
+
+            rb_restore_resp = server.handle_message({
+                "jsonrpc": "2.0",
+                "id": 14,
+                "method": "tools/call",
+                "params": {
+                    "name": "sea_otter_rollback",
+                    "arguments": {"action": "restore", "session_id": session_id, "dry_run": False},
+                },
+            })
+            rb_restore_payload = json.loads(rb_restore_resp["result"]["content"][0]["text"])
+            self.assertTrue(rb_restore_payload["success"])
+            self.assertEqual(rb_restore_payload["restored_count"], 1)
+            self.assertTrue(os.path.isfile(os.path.join(cache_dir, "bundle.cache")))
+
+    def test_mcp_stdio_stream_and_entrypoint(self):
+        # 1. 测试内存 stdio 流处理（含非法 JSON 容错与 Content-Length 帧头支持）
+        server = MCPStdioServer()
+        bad_and_good = (
+            "{bad_json\n"
+            + json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"}) + "\n"
+        )
+        framed_req = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        framed_msg = f"Content-Length: {len(framed_req)}\r\n\r\n{framed_req}"
+
+        in_buf = io.StringIO(bad_and_good + framed_msg)
+        out_buf = io.StringIO()
+        server.serve(stdin=in_buf, stdout=out_buf)
+
+        lines = [json.loads(line) for line in out_buf.getvalue().splitlines() if line.strip()]
+        self.assertEqual(len(lines), 3)
+        self.assertEqual(lines[0]["error"]["code"], -32700)
+        self.assertEqual(lines[1]["id"], 1)
+        self.assertEqual(lines[1]["result"], {})
+        self.assertEqual(lines[2]["id"], 2)
+        self.assertEqual(len(lines[2]["result"]["tools"]), 3)
+
+        # 2. 测试 sea-otter-mcp 真实子进程入口
+        mcp_cmd = shutil.which("sea-otter-mcp") or os.path.expanduser("~/.local/bin/sea-otter-mcp")
+        cmd = [mcp_cmd] if os.path.exists(mcp_cmd) else ["python3", "-m", "sea_otter.mcp_server"]
+        stdin_payload = (
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05"}}) + "\n"
+            + json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n"
+            + json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}) + "\n"
+        )
+        proc = subprocess.run(cmd, input=stdin_payload, capture_output=True, text=True, timeout=10)
+        self.assertEqual(proc.returncode, 0)
+        out_lines = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
+        self.assertEqual(len(out_lines), 2)
+        self.assertEqual(out_lines[0]["result"]["serverInfo"]["name"], "sea-otter-mcp")
+        self.assertEqual(len(out_lines[1]["result"]["tools"]), 3)
 
 
 if __name__ == "__main__":

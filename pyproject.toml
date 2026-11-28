@@ -44,6 +44,7 @@ dependencies = [
 
 [project.scripts]
 sea-otter = "sea_otter.cli:main"
+sea-otter-mcp = "sea_otter.mcp_server:main"
 
 [project.urls]
 Homepage = "https://github.com/milong/sea-otter"
