@@ -5,7 +5,7 @@
 
 import os
 import sys
-from typing import Optional
+from typing import Optional, List
 
 # 终端 ANSI 色彩代码
 class Color:
@@ -185,6 +185,19 @@ def get_association_badge(
         return c(f" 🔗[L2 特征库·{app_label}]", Color.BOLD, Color.BRIGHT_YELLOW)
     days_part = f"·{inactive_days}天未访问" if inactive_days is not None else ""
     return c(f" 🕰️[L3 启发式孤儿{days_part}]", Color.BOLD, Color.YELLOW)
+
+
+def get_secret_badge(
+    contains_secrets: bool,
+    severity: Optional[str] = None,
+    findings: Optional[List[str]] = None,
+) -> str:
+    """获取敏感凭据与 API Key 隐私审计告警徽标"""
+    if not contains_secrets:
+        return ""
+    if severity == "high" or (findings and any("含敏感键" in f or "凭据文件" in f for f in findings)):
+        return c(" ⚠️[高危隐私告警·明文凭据/Secret Included]", Color.BOLD, Color.BRIGHT_RED)
+    return c(" 🔑[敏感凭证]", Color.BOLD, Color.RED)
 
 
 

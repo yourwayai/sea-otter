@@ -9,6 +9,7 @@ import tempfile
 import unittest
 import subprocess
 import json
+import sqlite3
 import plistlib
 import yaml
 
@@ -19,6 +20,7 @@ from sea_otter.scanner import (
     RootOrphanScanner,
     ChannelRedundancyScanner,
     AssociationEngine,
+    SecretLeakAuditor,
 )
 from sea_otter.safety import validate_target_safety, contains_workspace_or_repo, normalize_path, RiskLevel
 from sea_otter.cleaner import SafeCleaner, QuarantineManager, QUARANTINE_DIR_PREFIX
@@ -381,6 +383,16 @@ class TestCLIExecution(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertIn("三级反向映射孤儿清理模式", proc.stdout)
         self.assertIn("Dry-run 只读模式", proc.stdout)
+
+    def test_cli_scan_secrets_flag(self):
+        proc = subprocess.run(["sea-otter", "scan", "-S", "--json"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0)
+        data = json.loads(proc.stdout)
+        self.assertIsInstance(data, list)
+        for tool in data:
+            for t in tool.get("targets", []):
+                self.assertTrue(t.get("contains_secrets"))
+                self.assertIn("secret_findings", t)
 
 
 class TestFineGrainedSlimming(unittest.TestCase):
@@ -1398,6 +1410,137 @@ class TestAssociationEngine(unittest.TestCase):
             self.assertEqual(match.association_method, "heuristic")
             self.assertGreaterEqual(match.inactive_days, 200)
             self.assertEqual(match.risk_level, RiskLevel.L2_ORPHAN.value)
+
+
+class TestSecretLeakAuditor(unittest.TestCase):
+    """测试 Task 09: 敏感凭据与 API Key 深度隐私审计 (Secret Leak Warning)"""
+
+    def test_credential_filenames_and_false_positive_guards(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # 1. 典型敏感凭据文件名
+            for fname in ["oauth_creds.json", "auth.json", "bootstrap_token.enc", "id_ed25519", ".env"]:
+                fp = os.path.join(tmp_dir, fname)
+                with open(fp, "w", encoding="utf-8") as f:
+                    f.write("placeholder")
+                res = SecretLeakAuditor.inspect_path(fp)
+                self.assertTrue(res.contains_secrets, f"凭据文件 {fname} 应触发敏感审计")
+                self.assertEqual(res.severity, "high")
+
+            # 2. 易误报的非凭据文件：microcredentials.json、tokenizer.json、公用 CA cacert.pem、.env.example
+            for safe_name, content in [
+                ("verified_nace_microcredentials.json", '{"courses": []}'),
+                ("tokenizer.json", '{"vocab_size": 32000}'),
+                ("cacert.pem", "-----BEGIN CERTIFICATE-----\nMII...\n-----END CERTIFICATE-----\n"),
+                (".env.example", "OPENAI_API_KEY="),
+            ]:
+                fp = os.path.join(tmp_dir, safe_name)
+                with open(fp, "w", encoding="utf-8") as f:
+                    f.write(content)
+                res = SecretLeakAuditor.inspect_path(fp)
+                self.assertFalse(res.contains_secrets, f"普通文件 {safe_name} 不应误报为敏感凭据")
+
+    def test_sensitive_keys_detection_and_secret_redaction(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            raw_secret = "sk-live-secret-token-value-987654321"
+            cfg_path = os.path.join(tmp_dir, "settings.json")
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "access_token": "oauth_tok_abc12345",
+                    "api_key": raw_secret,
+                    "client_secret": "sec_xyz_999",
+                    "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0\n-----END PRIVATE KEY-----",
+                }, f)
+
+            # 空值/占位符文件不应误报
+            empty_cfg = os.path.join(tmp_dir, "template.json")
+            with open(empty_cfg, "w", encoding="utf-8") as f:
+                json.dump({"api_key": None, "access_token": "", "secret": "<placeholder>"}, f)
+
+            res = SecretLeakAuditor.inspect_path(cfg_path)
+            self.assertTrue(res.contains_secrets)
+            self.assertEqual(res.severity, "high")
+            for expected_key in ["access_token", "api_key", "secret", "private_key"]:
+                self.assertIn(expected_key, res.matched_keys)
+            # 绝不泄露明文凭据值
+            joined = " ".join(res.findings)
+            self.assertNotIn(raw_secret, joined)
+            self.assertNotIn("oauth_tok_abc12345", joined)
+
+            res_empty = SecretLeakAuditor.inspect_path(empty_cfg)
+            self.assertFalse(res_empty.contains_secrets)
+
+    def test_sqlite_readonly_secret_audit(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = os.path.join(tmp_dir, "workbuddy_state.sqlite")
+            conn = sqlite3.connect(db_path)
+            conn.execute("CREATE TABLE ItemTable (key TEXT, value TEXT)")
+            conn.execute("INSERT INTO ItemTable VALUES ('oauth.access_token', 'tok_secret_value_12345')")
+            conn.execute("INSERT INTO ItemTable VALUES ('openai.api_key', 'sk-sqlite-secret-1234567890abcdef')")
+            conn.commit()
+            conn.close()
+
+            res = SecretLeakAuditor.inspect_path(db_path)
+            self.assertTrue(res.contains_secrets)
+            self.assertEqual(res.severity, "high")
+            self.assertIn("access_token", res.matched_keys)
+            self.assertIn("api_key", res.matched_keys)
+            self.assertFalse(os.path.exists(db_path + "-wal"))
+
+    def test_scanner_and_preclean_secret_warning_output(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            rules_dir = os.path.join(tmp_dir, "rules")
+            data_dir = os.path.join(tmp_dir, "Users", "tester", "Library", "Application Support", "LegacyAI")
+            os.makedirs(rules_dir)
+            os.makedirs(data_dir)
+
+            with open(os.path.join(data_dir, "oauth_creds.json"), "w", encoding="utf-8") as f:
+                json.dump({"access_token": "tok_legacy_12345", "api_key": "sk-legacy-1234567890abcdef"}, f)
+
+            rule_yaml = {
+                "id": "legacy-ai",
+                "name": "Legacy AI",
+                "category": "desktop-agent",
+                "vendor": "Legacy",
+                "targets": {
+                    "data_and_history": [
+                        {"path": data_dir, "description": "残留工作区目录"}
+                    ]
+                },
+            }
+            with open(os.path.join(rules_dir, "legacy-ai.yaml"), "w", encoding="utf-8") as f:
+                yaml.safe_dump(rule_yaml, f, allow_unicode=True)
+
+            # 1. RuleScanner 扫描应自动升级包含明文凭据的目录
+            scanner = RuleScanner(rules_dir=rules_dir)
+            report = scanner.scan_tool(rule_yaml)
+            self.assertEqual(len(report.targets), 1)
+            t = report.targets[0]
+            self.assertTrue(t.contains_secrets)
+            self.assertEqual(t.secret_severity, "high")
+            self.assertFalse(t.default_selected)
+            self.assertEqual(t.risk_level, RiskLevel.L2_ORPHAN.value)
+            self.assertTrue(any("oauth_creds.json" in fn for fn in t.secret_findings))
+
+            # 2. CLI clean --dry-run（未加 --include-secrets）应安全跳过并提示备份/授权
+            env = dict(os.environ)
+            env["SEA_OTTER_RULES_DIR"] = rules_dir
+            proc_skip = subprocess.run(
+                ["sea-otter", "clean", "legacy-ai", "--dry-run"],
+                capture_output=True, text=True, env=env,
+            )
+            self.assertEqual(proc_skip.returncode, 0)
+            self.assertIn("隐私安全提示", proc_skip.stdout)
+            self.assertIn("--include-secrets", proc_skip.stdout)
+
+            # 3. CLI clean --include-secrets --dry-run 应在清理前展示高危隐私告警与备份/抹除提示
+            proc_warn = subprocess.run(
+                ["sea-otter", "clean", "legacy-ai", "--include-secrets", "--dry-run"],
+                capture_output=True, text=True, env=env,
+            )
+            self.assertEqual(proc_warn.returncode, 0)
+            self.assertIn("高危隐私告警", proc_warn.stdout)
+            self.assertIn("备份", proc_warn.stdout)
+            self.assertIn("oauth_creds.json", proc_warn.stdout)
 
 
 if __name__ == "__main__":

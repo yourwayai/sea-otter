@@ -38,6 +38,7 @@ Traditional Mac cleanup apps (such as CleanMyMac or AppCleaner) typically rely o
 - 👻 **Root Orphan & Ghost Bug Scanner (`RootOrphanScanner`, `--ghosts`)**: Scans storage root entries directly to catch `^(\(null\)|undefined|null|none|\s+)$` directories, legacy unpacked assets (`2052-TM*`), misplaced CoreData files (`default.store*`), dead locks (`.ACCC_Lock`, `.ADCS_Lock`), and `< 64KB` skeleton empty directories.
 - 🏝️ **Multi-Channel Redundancy Cross-Check (`ChannelRedundancyScanner`, `--channels`)**: Links Chrome, Edge, and VS Code channel families; flags Canary/Dev/Beta/Insiders channels inactive for **> 90 days** while Stable is actively used.
 - 🔗 **Three-Tier Reverse Association Engine (`AssociationEngine`, `--associations`)**: Resolves decoupled app/folder names via `Info.plist` / `CFBundleIdentifier` lookup, curated signature DB (`Code` → VS Code, `com.openai.chat` → ChatGPT), and **180-day** idle heuristic probing.
+- 🔑 **Deep Secret Leak Auditing (`SecretLeakAuditor`, `--secrets`)**: Audits JSON, YAML, `.env`, PEM private keys, and read-only SQLite databases for plaintext `access_token`, `api_key`, `secret`, and `private_key` (without exposing raw values), displaying high-risk privacy badges and pre-clean backup/wipe warnings.
 - ⏪ **Atomic Quarantine & Lossless Rollback (`sea-otter rollback`)**: Archives cleaned items into `~/.Trash/AppSupport_Cleanup_<timestamp>/` with a structured `manifest.json` (v1.2.0), automatic name collision disambiguation, conflict protection, and one-command restoration.
 
 ---
@@ -101,13 +102,13 @@ sea-otter/
 │   └── todo-roadmap.md
 ├── sea_otter/                   # Python package engine (includes synced rules/ & schema/)
 │   ├── safety.py                # Four-Tier Safety Matrix & System Redline Vault
-│   ├── scanner.py               # RuleScanner / AIModelScanner / RootOrphanScanner / ChannelRedundancyScanner / AssociationEngine
+│   ├── scanner.py               # RuleScanner / AIModelScanner / SecretLeakAuditor / RootOrphanScanner / ChannelRedundancyScanner / AssociationEngine
 │   ├── cleaner.py               # SafeCleaner & QuarantineManager (atomic archive & rollback)
 │   ├── validator.py             # Zero-dependency Rule Schema v1.2 validator
 │   ├── ui.py                    # Terminal formatting & badges
 │   └── cli.py                   # CLI dispatcher & interactive console
 ├── tests/
-│   └── test_suite.py            # Automated unit test suite (56 tests)
+│   └── test_suite.py            # Automated unit test suite (61 tests)
 ├── pyproject.toml               # PEP 517 / 621 package metadata
 ├── README.md                    # Chinese Documentation
 └── README_EN.md                 # English Documentation
@@ -180,6 +181,9 @@ sea-otter scan --channels
 
 # Scan decoupled orphan directories via 3-tier reverse association (Plist / Signature DB / 180-day heuristic)
 sea-otter scan --associations
+
+# Run deep privacy audit for plaintext OAuth tokens, API keys, and private keys
+sea-otter scan --secrets
 
 # Include clean tools with zero residuals
 sea-otter scan --all
@@ -264,7 +268,7 @@ sea-otter about
   - [x] **Official Rules Expansion Round 1**: Chrome, Edge, WeChat DevTools, Lark/Steam, VS Code (19 rules total)
 - [ ] **Phase 3 & P2: Ecosystem Expansion & Agentic Integration**
   - [x] Three-tier reverse Association Engine for decoupled app/folder names
-  - [ ] Deep Secret Leak Warning for plaintext OAuth tokens and API keys
+  - [x] Deep Secret Leak Warning for plaintext OAuth tokens and API keys
   - [ ] Native Antigravity / Claude Code MCP Server (`sea-otter-mcp`)
   - [ ] Concurrent I/O scanning optimization (`os.scandir` + `ThreadPoolExecutor`)
 

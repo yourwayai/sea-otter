@@ -22,7 +22,7 @@ from sea_otter.validator import validate_rule_schema_v12
 from sea_otter.ui import (
     c, Color, format_size, print_banner, get_status_badge, get_risk_badge,
     get_model_badge, get_prunable_badge, get_ghost_badge, get_channel_badge,
-    get_association_badge, CATEGORY_NAMES
+    get_association_badge, get_secret_badge, CATEGORY_NAMES
 )
 
 def cmd_scan(args, scanner: RuleScanner):
@@ -36,6 +36,7 @@ def cmd_scan(args, scanner: RuleScanner):
     only_ghosts = getattr(args, "ghosts", False)
     only_channels = getattr(args, "channels", False)
     only_associations = getattr(args, "associations", False)
+    only_secrets = getattr(args, "secrets", False)
 
     if only_ghosts and not tools_filter:
         ghost_rules = [r for r in scanner.load_rules() if "ghost_rules" in r]
@@ -89,6 +90,12 @@ def cmd_scan(args, scanner: RuleScanner):
             r.total_size_bytes = sum(t.size_bytes for t in r.targets)
             r.safe_size_bytes = sum(t.size_bytes for t in r.targets if t.is_safe)
             r.model_weight_size_bytes = 0
+    elif only_secrets:
+        for r in reports:
+            r.targets = [t for t in r.targets if t.contains_secrets]
+            r.total_size_bytes = sum(t.size_bytes for t in r.targets)
+            r.safe_size_bytes = sum(t.size_bytes for t in r.targets if t.is_safe)
+            r.model_weight_size_bytes = 0
 
     if args.json:
         # JSON 格式输出，方便集成外部工具 (如 Raycast 插件)
@@ -114,6 +121,8 @@ def cmd_scan(args, scanner: RuleScanner):
                         "description": t.description,
                         "size_bytes": t.size_bytes,
                         "contains_secrets": t.contains_secrets,
+                        "secret_severity": t.secret_severity,
+                        "secret_findings": t.secret_findings,
                         "is_model_weight": t.is_model_weight,
                         "model_name": t.model_name,
                         "model_format": t.model_format,
@@ -167,6 +176,8 @@ def cmd_scan(args, scanner: RuleScanner):
         print(c("🏝️ 正在执行浏览器与 IDE 多通道发布孤岛交叉检测 (Channel Cross-Check)...", Color.BOLD, Color.BRIGHT_YELLOW))
     elif only_associations:
         print(c("🔗 正在执行应用名与路径脱节的三级反向映射孤儿扫描 (Association Engine)...", Color.BOLD, Color.BRIGHT_CYAN))
+    elif only_secrets:
+        print(c("🔑 正在执行敏感凭据与 API Key 深度隐私审计 (Secret Leak Warning)...", Color.BOLD, Color.BRIGHT_RED))
     else:
         print(c("🔍 正在扫描系统中的 AI 开发者工具与 Agent 残留...", Color.BOLD))
     print()
@@ -189,7 +200,7 @@ def cmd_scan(args, scanner: RuleScanner):
             for t in r.targets:
                 cat_desc = CATEGORY_NAMES.get(t.category, t.category)
                 risk_badge = get_risk_badge(t.risk_level)
-                secret_badge = c(" 🔑[敏感凭证]", Color.BOLD, Color.RED) if t.contains_secrets else ""
+                secret_badge = get_secret_badge(t.contains_secrets, t.secret_severity, t.secret_findings)
                 model_badge = get_model_badge(t.is_model_weight, t.size_bytes, t.model_name)
                 prune_badge = get_prunable_badge(t.prunable, t.resolved_path, t.description)
                 ghost_badge = get_ghost_badge(t.ghost_type, t.category)
@@ -203,6 +214,9 @@ def cmd_scan(args, scanner: RuleScanner):
                     if t.model_name and t.model_name not in desc_text:
                         desc_text = f"[{t.model_name}] {desc_text}"
                     print(f"       {c('↳ ' + desc_text, Color.DIM)}")
+                if t.contains_secrets and t.secret_findings:
+                    audit_summary = "; ".join(t.secret_findings[:3])
+                    print(f"       {c('⚠️ 隐私审计线索: ' + audit_summary + ' (存在本地凭据泄露隐患，清理前请先备份或安全抹除)', Color.RED)}")
         else:
             print(f"   {c('状态:', Color.DIM)} {c('无任何残留占用', Color.DIM)}")
         print()
@@ -246,6 +260,7 @@ def cmd_clean(args, scanner: RuleScanner):
     only_ghosts = getattr(args, "ghosts", False)
     only_channels = getattr(args, "channels", False)
     only_associations = getattr(args, "associations", False)
+    only_secrets = getattr(args, "secrets", False)
 
     if only_ghosts and not tools_filter:
         ghost_rules = [r for r in scanner.load_rules() if "ghost_rules" in r]
@@ -359,16 +374,17 @@ def cmd_clean(args, scanner: RuleScanner):
             print(f"ℹ️ 检测到 {c(str(skipped_l3_count), Color.BOLD)} 处 L3 在用软件减负目标 (共 {c(format_size(skipped_l3_bytes), Color.YELLOW)})，默认已受保护未勾选。")
             print(f"   如需深度清理正在使用的软件模型权重或缓存，请带上 {c('--include-l3', Color.CYAN)}、{c('--models', Color.CYAN)} 或 {c('--slim', Color.CYAN)} 参数。")
         if skipped_secrets_count > 0:
-            print(f"ℹ️ 检测到 {skipped_secrets_count} 处敏感凭证，默认已被跳过（如需清理请带上 {c('--include-secrets', Color.YELLOW)}）。")
+            print(f"⚠️ {c('[隐私安全提示]', Color.BOLD, Color.RED)} 检测到 {skipped_secrets_count} 处含敏感凭据/API Key 的目标，默认已安全跳过保护（请先确认备份，如需安全抹除废弃凭据请带上 {c('--include-secrets', Color.YELLOW)}）。")
         if args.dry_run:
             print(c("🛡️ [Dry-run 只读模式] 模拟运行，未对文件系统做任何改动。", Color.BOLD, Color.CYAN))
         return
 
     candidate_size = sum(t.size_bytes for t in candidates)
+    secret_candidates = [t for t in candidates if t.contains_secrets]
 
     print(c("🎯 待清理目标清单 (已通过四级安全防护矩阵仲裁):", Color.BOLD, Color.BRIGHT_WHITE))
     for t in candidates:
-        secret_mark = c(" 🔑[敏感凭证]", Color.RED) if t.contains_secrets else ""
+        secret_mark = get_secret_badge(t.contains_secrets, t.secret_severity, t.secret_findings)
         risk_mark = get_risk_badge(t.risk_level)
         model_mark = f" {get_model_badge(t.is_model_weight, t.size_bytes, t.model_name)}" if (t.is_model_weight or t.category == "ai_models") else ""
         prune_mark = f" {get_prunable_badge(t.prunable, t.resolved_path, t.description)}" if (t.prunable and not t.is_model_weight) else ""
@@ -378,6 +394,8 @@ def cmd_clean(args, scanner: RuleScanner):
         print(f"  [{c(CATEGORY_NAMES.get(t.category, t.category), Color.MAGENTA)}] {risk_mark}{model_mark}{prune_mark}{ghost_mark}{channel_mark}{assoc_mark} {t.resolved_path} {c(f'({format_size(t.size_bytes)})', Color.DIM)}{secret_mark}")
         if t.model_name:
             print(f"    {c(f'🧠 模型/向量库: {t.model_name} (可独立修剪/不破坏宿主主配置)', Color.CYAN)}")
+        if t.contains_secrets and t.secret_findings:
+            print(f"    {c('⚠️ 隐私审计线索: ' + '; '.join(t.secret_findings[:3]), Color.RED)}")
         print(f"    {c(t.description, Color.DIM)}")
 
     print()
@@ -386,7 +404,16 @@ def cmd_clean(args, scanner: RuleScanner):
         print(c("🛡️ [减负模式生效] 核心会话数据库、助手预设及敏感凭据已全部安全保留。", Color.CYAN))
     elif skipped_l3_count > 0:
         print(c(f"ℹ️ 另有 {skipped_l3_count} 处 L3 在用减负项 ({format_size(skipped_l3_bytes)}) 默认未勾选保护 (加 --include-l3 或 --slim 可纳入)", Color.DIM))
+    if skipped_secrets_count > 0:
+        print(c(f"⚠️ [隐私安全提示] 另有 {skipped_secrets_count} 处含明文凭据/API Key 目标默认安全跳过（如需抹除请先备份并加 --include-secrets）", Color.RED))
 
+    if secret_candidates:
+        print()
+        print(c("⚠️  [高危隐私告警 (Secret Leak Warning)]", Color.BOLD, Color.BRIGHT_RED))
+        print(c(f"    本次待处理清单包含 {len(secret_candidates)} 处敏感凭据/API Key/私钥目标，清理前请注意：", Color.RED))
+        print(c("    1. 如需继续使用或迁移对应账号，请先手动备份重要 OAuth Token / API Key；", Color.YELLOW))
+        print(c("    2. 若为已卸载/废弃软件残留的明文凭据，归档隔离或安全抹除后建议同步吊销旧密钥，防止本地泄露；", Color.YELLOW))
+        print(c("    3. 若误归档，可随时通过 `sea-otter rollback` 从隔离区恢复。", Color.DIM))
 
     if args.dry_run:
         print()
@@ -396,7 +423,11 @@ def cmd_clean(args, scanner: RuleScanner):
     # 交互确认
     if not args.yes:
         print()
-        confirm = input(f"确认将上述 {len(candidates)} 项移入系统废纸篓吗？[y/N]: ").strip().lower()
+        if secret_candidates:
+            prompt_msg = f"确认已备份重要凭据，并将上述 {len(candidates)} 项（含 {len(secret_candidates)} 处敏感凭据）安全归档/抹除吗？[y/N]: "
+        else:
+            prompt_msg = f"确认将上述 {len(candidates)} 项移入系统废纸篓吗？[y/N]: "
+        confirm = input(prompt_msg).strip().lower()
         if confirm not in ["y", "yes"]:
             print(c("🚫 已取消清理操作。", Color.YELLOW))
             return
@@ -735,6 +766,7 @@ def main():
     p_scan.add_argument("-g", "--ghosts", action="store_true", help="仅扫描根目录散落文件、幽灵目录与骨架空目录 (L1 极低风险)")
     p_scan.add_argument("-C", "--channels", action="store_true", help="仅检测多通道发布孤岛 (如超过 90 天未用的 Canary/Dev/Beta 测试通道)")
     p_scan.add_argument("-A", "--associations", action="store_true", help="仅检测应用名与路径脱节的三级反向映射孤儿目录")
+    p_scan.add_argument("-S", "--secrets", action="store_true", help="仅执行敏感凭据与 API Key 深度隐私审计 (Secret Leak Warning)")
     p_scan.add_argument("--json", action="store_true", help="以 JSON 格式输出扫描结果")
 
     # clean

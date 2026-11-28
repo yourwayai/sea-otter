@@ -245,12 +245,14 @@ def assess_risk_level(
     if is_model_weight:
         return RiskLevel.L3_IN_USE, True, "本地模型权重文件 (需用户确认)"
 
-    if contains_secrets:
-        return RiskLevel.L3_IN_USE, True, "包含敏感认证凭据 (Token/Key，需显式授权确认)"
-
     # 6. L2 判定：明确已卸载的孤儿配置 (Orphaned Apps)
     if software_status == "orphaned":
+        if contains_secrets:
+            return RiskLevel.L2_ORPHAN, True, "明确已卸载软件的孤儿残留 (⚠️ 含敏感凭据，需备份或 --include-secrets 授权)"
         return RiskLevel.L2_ORPHAN, True, "明确已卸载软件的历史孤儿残留 (默认勾选隔离)"
+
+    if contains_secrets:
+        return RiskLevel.L3_IN_USE, True, "包含敏感认证凭据 (Token/Key，需显式授权确认)"
 
     # 默认兜底
     return RiskLevel.L2_ORPHAN, True, "孤儿残留项 (默认勾选)"

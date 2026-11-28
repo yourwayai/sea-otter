@@ -8,8 +8,10 @@ import re
 import glob
 import json
 import time
+import sqlite3
 import plistlib
 import subprocess
+from urllib.parse import quote
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any, Tuple, Set
 import yaml
@@ -52,6 +54,8 @@ class TargetMatch:
     association_method: Optional[str] = None
     associated_app: Optional[str] = None
     associated_bundle_id: Optional[str] = None
+    secret_findings: List[str] = field(default_factory=list)
+    secret_severity: Optional[str] = None
 
 @dataclass
 class AIModelInspectionResult:
@@ -287,6 +291,346 @@ class AIModelScanner:
             )
 
         return AIModelInspectionResult()
+
+
+@dataclass
+class SecretAuditResult:
+    """敏感凭据与 API Key 深度隐私审计结果 (Secret Leak Warning)"""
+    contains_secrets: bool = False
+    severity: Optional[str] = None  # "high" | "medium" | None
+    matched_files: List[str] = field(default_factory=list)
+    matched_keys: List[str] = field(default_factory=list)
+    findings: List[str] = field(default_factory=list)
+
+
+class SecretLeakAuditor:
+    """
+    敏感凭据与 API Key 深度隐私审计引擎 (SecretLeakAuditor)
+    深度检测废弃或残留目录中的凭据文件与明文敏感键名（access_token, api_key, secret, private_key 等），
+    仅记录脱敏后的文件与键名线索，绝不在报告或终端输出任何明文凭据值。
+    """
+
+    KNOWN_CREDENTIAL_FILENAMES = {
+        "oauth_creds.json",
+        "auth.json",
+        "credentials.json",
+        "credentials.yaml",
+        "credentials.yml",
+        "credentials.toml",
+        "credentials",
+        "token.json",
+        "tokens.json",
+        "secrets.json",
+        "secret.json",
+        "api_keys.json",
+        "apikeys.json",
+        "bootstrap_token.enc",
+        "jetski-standalone-oauth-token",
+        "workbuddy-desktop-ai.info",
+        ".npmrc",
+        ".pypirc",
+        ".netrc",
+        ".env",
+        ".env.local",
+        ".env.production",
+        "id_rsa",
+        "id_ed25519",
+        "id_ecdsa",
+        "id_dsa",
+    }
+
+    PRIVATE_KEY_EXTENSIONS = {".key", ".p12", ".pfx"}
+
+    CREDENTIAL_FILENAME_REGEX = re.compile(
+        r"^(?!.*(?:tokenizer|token_count|token_budget|max_tokens|microcredential)).*"
+        r"(?:^|[-_.])(?:oauth|oauth_creds|credentials?|secrets?|api[-_]?keys?|auth[-_]?tokens?|refresh[-_]?tokens?|access[-_]?tokens?)"
+        r"(?:[-_.].*)?\.(?:json|ya?ml|toml|ini|conf|info|txt|enc|env)$",
+        re.IGNORECASE,
+    )
+
+    TEXT_INSPECT_EXTENSIONS = {
+        ".json", ".yaml", ".yml", ".toml", ".ini", ".conf",
+        ".env", ".txt", ".info", ".xml", ".plist",
+    }
+
+    SQLITE_EXTENSIONS = {".sqlite", ".sqlite3", ".db", ".vscdb"}
+
+    EXCLUDED_SUBDIRS = {
+        ".git", ".svn", ".hg", "node_modules", "site-packages", "__pycache__",
+        "dist-packages", "venv", ".venv", "cache", "code cache", "gpucache",
+        "dawngraphitecache", "dawnwebgpucache", "crashpad", "indexeddb",
+        "local storage", "session storage", "blob_storage", "blobs",
+        "dictionaries", "extensions", "logs",
+    }
+
+    # 匹配常见配置文件中含非空赋值的敏感键名
+    SENSITIVE_KEY_PATTERNS: List[Tuple[re.Pattern, str]] = [
+        (
+            re.compile(
+                r"""(?:["']?)(access_token|refresh_token|oauth_token|id_token|bearer_token|auth_token|session_token)(?:["']?)\s*[:=]\s*(?!["']?(?:null|none|false|true|undefined|<[^>]+>|\$\{[^}]+\})?["']?(?:\s*[,}\]\n]|$))["']?[A-Za-z0-9._~+/=-]{3,}""",
+                re.IGNORECASE,
+            ),
+            "access_token",
+        ),
+        (
+            re.compile(
+                r"""(?:["']?)(openai_api_key|anthropic_api_key|gemini_api_key|api_key|apikey|x-api-key)(?:["']?)\s*[:=]\s*(?!["']?(?:null|none|false|true|undefined|<[^>]+>|\$\{[^}]+\})?["']?(?:\s*[,}\]\n]|$))["']?[A-Za-z0-9._~+/=-]{3,}""",
+                re.IGNORECASE,
+            ),
+            "api_key",
+        ),
+        (
+            re.compile(
+                r"""(?:["']?)(client_secret|api_secret|app_secret|secret_key|secret)(?:["']?)\s*[:=]\s*(?!["']?(?:null|none|false|true|undefined|<[^>]+>|\$\{[^}]+\})?["']?(?:\s*[,}\]\n]|$))["']?[A-Za-z0-9._~+/=-]{3,}""",
+                re.IGNORECASE,
+            ),
+            "secret",
+        ),
+        (
+            re.compile(
+                r"""(?:["']?)(private_key|signing_key|encryption_key)(?:["']?)\s*[:=]\s*(?!["']?(?:null|none|false|true|undefined|<[^>]+>|\$\{[^}]+\})?["']?(?:\s*[,}\]\n]|$))["']?[A-Za-z0-9._~+/=\\ -]{3,}""",
+                re.IGNORECASE,
+            ),
+            "private_key",
+        ),
+    ]
+
+    TOKEN_VALUE_PATTERNS: List[Tuple[re.Pattern, str]] = [
+        (re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"), "private_key"),
+        (re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}\b"), "api_key"),
+        (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"), "access_token"),
+        (re.compile(r"\bAIza[0-9A-Za-z_-]{30,}\b"), "api_key"),
+        (re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,}\b"), "access_token"),
+    ]
+
+    SQLITE_SENSITIVE_KEY_NAMES = (
+        "access_token", "refresh_token", "oauth_token", "api_key",
+        "apikey", "client_secret", "secret_key", "secret", "private_key",
+    )
+
+    SQLITE_AUTH_TABLE_HINTS = (
+        "auth", "token", "secret", "cred", "account", "session",
+        "setting", "config", "itemtable", "kv", "pref", "key",
+    )
+
+    MAX_TEXT_READ_BYTES = 256 * 1024
+    MAX_SQLITE_BYTES = 10 * 1024 * 1024
+
+    @classmethod
+    def _is_credential_filename(cls, basename: str) -> bool:
+        low = basename.lower()
+        if low in cls.KNOWN_CREDENTIAL_FILENAMES:
+            return True
+        _, ext = os.path.splitext(low)
+        if ext in cls.PRIVATE_KEY_EXTENSIONS:
+            return True
+        if low.startswith(".env.") and low != ".env.example":
+            return True
+        return bool(cls.CREDENTIAL_FILENAME_REGEX.match(basename))
+
+    @classmethod
+    def _scan_text_content(cls, text: str) -> List[str]:
+        keys: List[str] = []
+        seen: Set[str] = set()
+        for pat, label in cls.SENSITIVE_KEY_PATTERNS:
+            if pat.search(text) and label not in seen:
+                keys.append(label)
+                seen.add(label)
+        for pat, label in cls.TOKEN_VALUE_PATTERNS:
+            if pat.search(text) and label not in seen:
+                keys.append(label)
+                seen.add(label)
+        return keys
+
+    @classmethod
+    def _scan_sqlite_file(cls, filepath: str) -> List[str]:
+        """以只读 URI 模式审计 SQLite 表名/列名/键值中的敏感凭据字段（零写入副作用）"""
+        try:
+            if os.path.getsize(filepath) > cls.MAX_SQLITE_BYTES:
+                return []
+        except OSError:
+            return []
+
+        found_keys: List[str] = []
+        seen: Set[str] = set()
+        conn = None
+        try:
+            uri = f"file:{quote(os.path.abspath(filepath))}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True, timeout=0.5)
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            tables = [row[0] for row in cur.fetchall() if row and isinstance(row[0], str)]
+
+            for tbl in tables[:20]:
+                safe_tbl = tbl.replace('"', '""')
+                tbl_low = tbl.lower()
+                try:
+                    cur.execute(f'PRAGMA table_info("{safe_tbl}")')
+                    cols = [str(r[1]) for r in cur.fetchall() if len(r) > 1 and r[1]]
+                except sqlite3.Error:
+                    continue
+
+                for col in cols:
+                    col_low = col.lower()
+                    for sk in cls.SQLITE_SENSITIVE_KEY_NAMES:
+                        if sk in col_low:
+                            canon = "api_key" if "api" in sk else ("private_key" if "private" in sk else ("secret" if "secret" in sk else "access_token"))
+                            if canon not in seen:
+                                found_keys.append(canon)
+                                seen.add(canon)
+
+                if any(h in tbl_low for h in cls.SQLITE_AUTH_TABLE_HINTS) or found_keys:
+                    try:
+                        cur.execute(f'SELECT * FROM "{safe_tbl}" LIMIT 50')
+                        for row in cur.fetchall():
+                            row_text = " ".join(str(cell) for cell in row if cell is not None)
+                            if not row_text:
+                                continue
+                            for key_label in cls._scan_text_content(row_text):
+                                if key_label not in seen:
+                                    found_keys.append(key_label)
+                                    seen.add(key_label)
+                            row_low = row_text.lower()
+                            for sk in cls.SQLITE_SENSITIVE_KEY_NAMES:
+                                if sk in row_low and len(row) >= 2:
+                                    # key/value 对场景下确认存在非空 value
+                                    non_empty_vals = [str(c).strip() for c in row if c is not None and str(c).strip()]
+                                    if len(non_empty_vals) >= 2 and non_empty_vals[1].lower() not in {"null", "none", ""}:
+                                        canon = "api_key" if "api" in sk else ("private_key" if "private" in sk else ("secret" if "secret" in sk else "access_token"))
+                                        if canon not in seen:
+                                            found_keys.append(canon)
+                                            seen.add(canon)
+                    except sqlite3.Error:
+                        continue
+        except sqlite3.Error:
+            return []
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        return found_keys
+
+    @classmethod
+    def _inspect_single_file(cls, filepath: str) -> Tuple[bool, List[str]]:
+        basename = os.path.basename(filepath)
+        lower_name = basename.lower()
+        _, ext = os.path.splitext(lower_name)
+
+        fname_match = cls._is_credential_filename(basename)
+        matched_keys: List[str] = []
+
+        if ext in cls.SQLITE_EXTENSIONS:
+            matched_keys = cls._scan_sqlite_file(filepath)
+        elif ext in cls.TEXT_INSPECT_EXTENSIONS or ext in cls.PRIVATE_KEY_EXTENSIONS or ext == ".pem" or fname_match or lower_name.startswith(".env"):
+            try:
+                if os.path.isfile(filepath) and os.path.getsize(filepath) <= 2 * 1024 * 1024:
+                    with open(filepath, "rb") as f:
+                        raw = f.read(cls.MAX_TEXT_READ_BYTES)
+                    if b"\x00" not in raw:
+                        text = raw.decode("utf-8", errors="ignore")
+                        matched_keys = cls._scan_text_content(text)
+            except OSError:
+                pass
+
+        return fname_match, matched_keys
+
+    @classmethod
+    def inspect_path(
+        cls,
+        path: str,
+        max_files: int = 400,
+        declared_contains_secrets: bool = False,
+    ) -> SecretAuditResult:
+        """
+        对目标文件或目录执行深度敏感凭据隐私审计。
+        """
+        normalized = normalize_path(path)
+        matched_files: List[str] = []
+        matched_keys: List[str] = []
+        seen_keys: Set[str] = set()
+        findings: List[str] = []
+
+        if not os.path.exists(normalized):
+            if declared_contains_secrets:
+                return SecretAuditResult(
+                    contains_secrets=True,
+                    severity="medium",
+                    findings=["规则声明包含敏感认证凭据"],
+                )
+            return SecretAuditResult()
+
+        def _record_file(rel_label: str, fname_hit: bool, keys: List[str]):
+            if not fname_hit and not keys:
+                return
+            matched_files.append(rel_label)
+            for k in keys:
+                if k not in seen_keys:
+                    matched_keys.append(k)
+                    seen_keys.add(k)
+            if len(findings) < 5:
+                if keys and fname_hit:
+                    findings.append(f"{rel_label} (凭据文件·含敏感键: {', '.join(keys)})")
+                elif keys:
+                    findings.append(f"{rel_label} (含敏感键: {', '.join(keys)})")
+                else:
+                    findings.append(f"{rel_label} (匹配敏感凭据文件名)")
+
+        if os.path.isfile(normalized) and not os.path.islink(normalized):
+            fname_hit, keys = cls._inspect_single_file(normalized)
+            _record_file(os.path.basename(normalized), fname_hit, keys)
+        elif os.path.isdir(normalized) and not os.path.islink(normalized):
+            scanned = 0
+            stack = [normalized]
+            try:
+                while stack and scanned < max_files:
+                    current = stack.pop()
+                    try:
+                        with os.scandir(current) as it:
+                            entries = sorted(it, key=lambda e: e.name)
+                    except OSError:
+                        continue
+
+                    for entry in entries:
+                        if scanned >= max_files:
+                            break
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            low_d = entry.name.lower()
+                            if low_d in cls.EXCLUDED_SUBDIRS or "venv" in low_d:
+                                continue
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            scanned += 1
+                            fname_hit, keys = cls._inspect_single_file(entry.path)
+                            if fname_hit or keys:
+                                rel = os.path.relpath(entry.path, normalized)
+                                _record_file(rel, fname_hit, keys)
+            except OSError:
+                pass
+
+        if matched_files or matched_keys:
+            severity = "high" if (matched_keys or any(
+                os.path.basename(f).lower() in cls.KNOWN_CREDENTIAL_FILENAMES for f in matched_files
+            )) else "medium"
+            return SecretAuditResult(
+                contains_secrets=True,
+                severity=severity,
+                matched_files=matched_files,
+                matched_keys=matched_keys,
+                findings=findings,
+            )
+
+        if declared_contains_secrets:
+            return SecretAuditResult(
+                contains_secrets=True,
+                severity="medium",
+                findings=["规则声明包含敏感认证凭据"],
+            )
+
+        return SecretAuditResult()
 
 
 @dataclass
@@ -1936,9 +2280,11 @@ class AssociationEngine:
                     continue
 
                 size_bytes, file_count = ChannelRedundancyScanner._compute_path_size_and_count(entry.path)
+                secret_res = SecretLeakAuditor.inspect_path(entry.path)
                 risk_lvl, is_safe, safety_reason = assess_risk_level(
                     target_path=entry.path,
                     software_status="orphaned",
+                    contains_secrets=secret_res.contains_secrets,
                     category="data_and_history",
                 )
                 if not is_safe or risk_lvl == RiskLevel.L4_DANGER:
@@ -1952,9 +2298,9 @@ class AssociationEngine:
                     description=res.reason,
                     size_bytes=size_bytes,
                     file_count=file_count,
-                    contains_secrets=False,
+                    contains_secrets=secret_res.contains_secrets,
                     is_model_weight=False,
-                    default_selected=True,
+                    default_selected=not secret_res.contains_secrets,
                     is_safe=is_safe,
                     safety_reason=safety_reason,
                     risk_level=risk_lvl.value if isinstance(risk_lvl, RiskLevel) else str(risk_lvl),
@@ -1967,6 +2313,8 @@ class AssociationEngine:
                     association_method=res.method,
                     associated_app=res.app_name,
                     associated_bundle_id=res.bundle_id,
+                    secret_findings=secret_res.findings,
+                    secret_severity=secret_res.severity,
                 ))
 
         total_size = sum(t.size_bytes for t in targets)
@@ -2184,7 +2532,17 @@ class RuleScanner:
                     detected_model_name = item.get("model_name") or model_res.model_name
                     detected_model_format = item.get("model_format") or model_res.model_format
 
-                    has_secret = item.get("contains_secrets", False)
+                    declared_secret = item.get("contains_secrets", False)
+                    if cat_name in ("caches", "ai_models", "binaries_and_scripts") or is_model:
+                        secret_res = SecretAuditResult(
+                            contains_secrets=declared_secret,
+                            severity="medium" if declared_secret else None,
+                            findings=["规则声明包含敏感认证凭据"] if declared_secret else [],
+                        )
+                    else:
+                        secret_res = SecretLeakAuditor.inspect_path(p, declared_contains_secrets=declared_secret)
+
+                    has_secret = secret_res.contains_secrets
                     declared_level = item.get("risk_level")
 
                     # 四级安全矩阵评估
@@ -2200,12 +2558,14 @@ class RuleScanner:
 
                     # 默认勾选逻辑:
                     # L1 (极低风险): 默认勾选归档
-                    # L2 (明确已卸载): 默认勾选隔离
+                    # L2 (明确已卸载): 默认勾选隔离（含敏感凭据时默认取消勾选以提示备份/确认）
                     # L3 (在用软件减负): 默认不勾选，需用户确认
                     # L4 (绝对系统红线): 硬编码阻断，不可勾选
                     if risk_lvl == RiskLevel.L4_DANGER:
                         default_selected = False
                         is_safe = False
+                    elif has_secret:
+                        default_selected = False
                     elif risk_lvl == RiskLevel.L3_IN_USE:
                         default_selected = False
                     elif risk_lvl in [RiskLevel.L1_SAFE, RiskLevel.L2_ORPHAN]:
@@ -2235,6 +2595,8 @@ class RuleScanner:
                         regenerable=regenerable,
                         tool_id=tool_id,
                         tool_name=name,
+                        secret_findings=secret_res.findings,
+                        secret_severity=secret_res.severity,
                     )
                     targets.append(t_match)
 
@@ -2256,7 +2618,16 @@ class RuleScanner:
                             sp_is_model = sub.get("is_model_weight", False) or cat_name == "ai_models" or sp_model_res.is_model_weight
                             sp_model_name = sub.get("model_name") or sp_model_res.model_name
                             sp_model_format = sub.get("model_format") or sp_model_res.model_format
-                            sp_secret = sub.get("contains_secrets", False)
+                            sp_declared_secret = sub.get("contains_secrets", False)
+                            if cat_name in ("caches", "ai_models") or sp_is_model or sub.get("prunable", False):
+                                sp_secret_res = SecretAuditResult(
+                                    contains_secrets=sp_declared_secret,
+                                    severity="medium" if sp_declared_secret else None,
+                                    findings=["规则声明包含敏感认证凭据"] if sp_declared_secret else [],
+                                )
+                            else:
+                                sp_secret_res = SecretLeakAuditor.inspect_path(sp, declared_contains_secrets=sp_declared_secret)
+                            sp_secret = sp_secret_res.contains_secrets
                             sp_declared_lvl = sub.get("risk_level")
                             sp_risk_lvl, sp_safe, sp_reason = assess_risk_level(
                                 target_path=sp,
@@ -2287,6 +2658,8 @@ class RuleScanner:
                                 regenerable=sub.get("regenerable", True),
                                 tool_id=tool_id,
                                 tool_name=name,
+                                secret_findings=sp_secret_res.findings,
+                                secret_severity=sp_secret_res.severity,
                             ))
 
         # 处理规则中声明的 ghost_rules.root_patterns (Schema v1.2)

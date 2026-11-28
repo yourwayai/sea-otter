@@ -1,23 +1,24 @@
 # Sea-Otter (DevSweep) 演进路线与待办清单 (Optimization Backlog)
 
 > **版本定位**：基于 [architecture-and-lessons-learned.md](architecture-and-lessons-learned.md) (v1.2 Milestone Release) 实战指南提炼，记录项目后续的迭代规划与具体待办项。  
-> **更新状态**：已完成前 9 项（四级安全防护矩阵、端侧大模型识别引擎、本地会话与向量裁剪、Schema v1.2 规范与校验、根目录散落与幽灵探测、多通道发布孤岛检测、原子隔离区与一键无损回滚、官方规则库第一轮扩充、三级反向映射引擎），**P0 与 P1 阶段全部圆满达成 🎉，P2 阶段已完成 1 项**，剩余 **3 项 P2 演进任务** 如下。
+> **更新状态**：已完成前 10 项（四级安全防护矩阵、端侧大模型识别引擎、本地会话与向量裁剪、Schema v1.2 规范与校验、根目录散落与幽灵探测、多通道发布孤岛检测、原子隔离区与一键无损回滚、官方规则库第一轮扩充、三级反向映射引擎、敏感凭据深度隐私审计），**P0 与 P1 阶段全部圆满达成 🎉，P2 阶段已完成 2 项**，剩余 **2 项 P2 演进任务** 如下。
 
 ---
 
 ## 📋 待办进度看板 (Kanban)
 
 ```
-[ 已完成 (9) ] ──────────> [ 进行中 (0) ] ──────────> [ 待开始 (3) ]
+[ 已完成 (10) ] ─────────> [ 进行中 (0) ] ──────────> [ 待开始 (2) ]
 • 四级安全矩阵 (L1~L4)                                 • P0 阶段: 0 项 (全部达成!)
 • 端侧大模型引擎 (AIModelScanner)                      • P1 阶段: 0 项 (全部达成!)
-• 细粒度会话与向量裁剪 (Slim Mode)                     • P2 阶段: 3 项
+• 细粒度会话与向量裁剪 (Slim Mode)                     • P2 阶段: 2 项
 • 规则 Schema v1.2 规范与校验 (Validator)
 • 根目录散落与幽灵探测 (RootOrphanScanner)
 • 多通道发布孤岛检测 (ChannelRedundancyScanner)
 • 原子隔离与无损回滚 (Quarantine & Rollback)
 • 官方规则库第一轮扩充 (Chrome/Edge/微信/飞书/VSCode)
 • 三级反向映射引擎 (AssociationEngine)
+• 敏感凭据深度隐私审计 (SecretLeakAuditor)
 ```
 
 ---
@@ -145,14 +146,16 @@
 
 ---
 
-### [ ] Task 09: 敏感凭据与 API Key 深度隐私审计 (Secret Leak Warning)
+### [x] Task 09: 敏感凭据与 API Key 深度隐私审计 (Secret Leak Warning)
 * **痛点/价值**：废弃应用残留的 SQLite 或 JSON 文件中常保存有明文 OAuth Token 或 API Key（如 WorkBuddy 残留明文 Token），存在本地信息泄露隐患。
 * **涉及模块**：
-  * `sea_otter/scanner.py`
-  * `sea_otter/ui.py`
-* **验收标准**：
-  1. 深度检测常见的凭据文件名与敏感键名（`access_token`、`api_key`、`secret`、`private_key`）；
-  2. 终端展示明显的隐私告警标志，并在清理前提示用户备份或安全抹除。
+  * `sea_otter/scanner.py`（实现 `SecretLeakAuditor`，支持文件名模式、JSON/YAML/ENV 敏感键与 SQLite 只读 URI 审计及脱敏输出）
+  * `sea_otter/safety.py`（保持已卸载孤儿含凭据目录归属 `L2_ORPHAN` 同时默认不勾选保护）
+  * `sea_otter/ui.py` & `sea_otter/cli.py`（新增 `get_secret_badge` 高危隐私告警标志、`scan -S --secrets` 专项模式与清理前备份/抹除提示）
+* **验收结果**：
+  1. ✅ 深度检测常见凭据文件名（`oauth_creds.json`、`auth.json`、`bootstrap_token.enc`、`id_ed25519`、`.env` 等）、文本敏感键名（`access_token`、`api_key`、`secret`、`private_key`）及 SQLite 数据库只读表字段，绝不回显明文凭据值；
+  2. ✅ 终端展示 `⚠️[高危隐私告警·明文凭据/Secret Included]` 徽标与脱敏审计线索，并在清理前展示备份/安全抹除提示框；
+  3. ✅ 经实机扫描验证与单元测试全覆盖（共 61 项测试全数通过）。
 
 ---
 
